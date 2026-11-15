@@ -168,6 +168,8 @@ export class FlightSim {
   /** Unit vector for the correction burn (prograde before the flyby, sideways after). */
   private tcmDir: Vec3 = { x: 1, y: 0, z: 0 };
   private tcmDone = 0;
+  /** Delta-v spent on course corrections so far (m/s). */
+  tcmUsed = 0;
   private flybyPassed = false;
   private planned = false;
   private chuteTime = 0;
@@ -440,7 +442,10 @@ export class FlightSim {
     this.v = vadd(this.v, vscale(acc, dt));
     this.r = vadd(this.r, vscale(this.v, dt));
     this.t += dt;
-    if (mdot > 0 && this.phase === "tcm") this.tcmDone += (thrust / m) * dt;
+    if (mdot > 0 && this.phase === "tcm") {
+      this.tcmDone += (thrust / m) * dt;
+      this.tcmUsed += (thrust / m) * dt;
+    }
 
     this.checkStaging();
 

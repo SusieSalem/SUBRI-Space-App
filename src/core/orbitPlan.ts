@@ -29,6 +29,7 @@ import {
   vlen,
   vnorm,
   vscale,
+  vsub,
   type CoastState,
   type Vec3,
 } from "./orbit";
@@ -46,8 +47,11 @@ export interface OrbitPlan {
 export const PARKING_ALT_RANGE = { min: 160000, max: 400000, step: 5000 };
 export const TLI_DV_RANGE = { min: 2900, max: 3300 };
 
-/** First plan shown: heads out towards the Moon but misses it, so the player has something to fix. */
-export const DEFAULT_PLAN: OrbitPlan = { parkingAltM: PARKING_ALT, phaseDeg: 290, tliDvMs: 3130 };
+/**
+ * First plan shown: heads out towards the Moon but passes it by tens of
+ * thousands of km, so the player has something to fix (about 120° hits it).
+ */
+export const DEFAULT_PLAN: OrbitPlan = { parkingAltM: PARKING_ALT, phaseDeg: 95, tliDvMs: 3130 };
 
 /** Perilune band (height above the Moon) that gives a useful swing round it. */
 const PERILUNE_MIN = 100000;
@@ -115,6 +119,24 @@ export interface PlanResult {
   checks: { moon: Check; fuel: Check; home: Check };
   /** True when all three checks are at least amber. */
   flyable: boolean;
+  /**
+   * The whole trip as the flight will really fly it, automatic course corrections
+   * included. Only in exact mode (the copy of the flight flies on to splashdown).
+   */
+  flown: FlownTrip | null;
+}
+
+export interface FlownTrip {
+  /** Path from the first course correction on, in the same frame as outbound/inbound. */
+  path: MapPoint[];
+  /** Delta-v the automatic course corrections used (m/s). */
+  correctionDv: number;
+  /** Number of correction burns. */
+  corrections: number;
+  outcome: "splashdown" | "failed" | "lost";
+  /** Days from the burn to the end of the trip. */
+  days: number;
+  periluneAlt: number;
 }
 
 /* -------------------------------------------------------------- frames */
@@ -197,14 +219,56 @@ export function parkingOrbit(rocket: RocketId, parts: PartId[], parkingAltM: num
  * dragging). Exact: a copy of the flight flies the real, minutes-long burn with the
  * autopilot, so the prediction is what the flight will do.
  */
-function afterBurn(cp: CachedParking, plan: OrbitPlan, burn: CoastState, coarse: boolean): CoastState {
-  if (coarse || !cp.sim) return { t: burn.t, r: burn.r, v: vadd(burn.v, vscale(vnorm(burn.v), plan.tliDvMs)) };
+function afterBurn(
+  cp: CachedParking,
+  plan: OrbitPlan,
+  burn: CoastState,
+  coarse: boolean,
+): { state: CoastState; sim: FlightSim | null } {
+  if (coarse || !cp.sim) return { state: { t: burn.t, r: burn.r, v: vadd(burn.v, vscale(vnorm(burn.v), plan.tliDvMs)) }, sim: null };
   const sim = cp.sim.clone();
   sim.plan = plan;
   sim.holdAtParking = false;
   const limit = burn.t + 4 * 3600;
   while ((sim.phase === "parking" || sim.phase === "tli") && sim.t < limit) sim.advance(60);
-  return { t: sim.t, r: { ...sim.r }, v: { ...sim.v } };
+  return { state: { t: sim.t, r: { ...sim.r }, v: { ...sim.v } }, sim };
+}
+
+/** Lets the copy of the flight fly on to the end, corrections and all, recording its path. */
+function flyOn(sim: FlightSim, mapStart: number): FlownTrip {
+  const end = sim.t + 14 * 86400;
+  const path: MapPoint[] = [toMap(sim.r, sim.t, mapStart)];
+  const firstEvent = sim.events.length;
+  let lastR = vlen(sim.r);
+  let perilune = Infinity;
+  const toMoon = () => vlen(vsub(sim.r, moonPosition(sim.t)));
+  while (sim.phase !== "splashdown" && sim.phase !== "failed" && sim.t < end) {
+    // Short steps near the Earth and the Moon so the curve stays smooth there.
+    const step = vlen(sim.r) < 60000000 || toMoon() < 60000000 ? 300 : 1200;
+    sim.advance(step);
+    const dMoon = toMoon();
+    perilune = Math.min(perilune, dMoon);
+    const r = vlen(sim.r);
+    // Keep a point every ~1% change of distance, and always near the bodies.
+    if (Math.abs(r - lastR) > 0.01 * r || r < 60000000 || dMoon < 60000000) {
+      path.push(toMap(sim.r, sim.t, mapStart));
+      lastR = r;
+    }
+  }
+  path.push(toMap(sim.r, sim.t, mapStart));
+  const tcms = sim.events
+    .slice(firstEvent)
+    .filter((e) => e.type === "message" && e.text.startsWith("Course correction:"));
+  // Before the first correction the flight follows the predicted path exactly.
+  const fromH = tcms.length ? (tcms[0].t - mapStart) / 3600 : Infinity;
+  return {
+    path: path.filter((p) => p.h >= fromH),
+    corrections: tcms.length,
+    correctionDv: sim.tcmUsed,
+    outcome: sim.phase === "splashdown" ? "splashdown" : sim.phase === "failed" ? "failed" : "lost",
+    days: (sim.t - mapStart) / 86400,
+    periluneAlt: perilune - R_MOON,
+  };
 }
 
 /* ----------------------------------------------------------- predict */
@@ -318,11 +382,13 @@ export function evaluatePlan(
       perilunePoint: null,
       checks: { moon: bad, fuel: bad, home: bad },
       flyable: false,
+      flown: null,
     };
   }
 
   const burn = findPhaseCrossing(parking.state, plan.phaseDeg, cp.lead);
-  const after = afterBurn(cp, plan, burn, !!opts.coarse);
+  const flight = afterBurn(cp, plan, burn, !!opts.coarse);
+  const after = flight.state;
   const apoapsisAlt = orbitInfo(after.r, after.v).apoapsisAlt;
   const c = coast(after, !!opts.coarse);
 
@@ -381,6 +447,25 @@ export function evaluatePlan(
   }
 
   const mapStart = burn.t;
+  // Exact mode: fly the trip on, corrections included, and trust that over the coast.
+  const flown = flight.sim && moon.state !== "bad" && fuel.state !== "bad" ? flyOn(flight.sim, mapStart) : null;
+  if (flown && flown.outcome === "splashdown" && home.state === "bad") {
+    home = {
+      state: "warn",
+      title: "Home with corrections",
+      detail: `On its own the way home misses, but the autopilot's course corrections (${Math.round(flown.correctionDv)} m/s) bring the crew back on day ${flown.days.toFixed(1)}.`,
+    };
+  } else if (flown && flown.outcome !== "splashdown" && home.state !== "bad") {
+    home = {
+      state: "bad",
+      title: "Doesn't make it home",
+      detail:
+        flown.outcome === "failed"
+          ? "Even with the automatic course corrections the re-entry fails. Fine-tune the burn angle."
+          : `The course corrections run out after ${Math.round(flown.correctionDv)} m/s and the crew isn't home after 14 days. Fine-tune the burn angle.`,
+    };
+  }
+
   return {
     parking,
     burn,
@@ -397,6 +482,7 @@ export function evaluatePlan(
     perilunePoint: toMap(c.perilunePos, c.periluneT, mapStart),
     checks: { moon, fuel, home },
     flyable: moon.state !== "bad" && fuel.state !== "bad" && home.state !== "bad",
+    flown,
   };
 }
 

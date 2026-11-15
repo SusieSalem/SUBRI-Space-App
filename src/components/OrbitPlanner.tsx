@@ -185,7 +185,7 @@ export default function OrbitPlanner({ rocket, parts, plan, onChange }: Props) {
         </div>
         <TripMap result={result} />
         <DepartureView result={result} plan={plan} onPhase={(d) => set({ phaseDeg: d })} />
-        <Legend />
+        <Legend corrected={showFlown(result)} />
       </section>
 
       <aside className="panel planner-checks">
@@ -214,7 +214,20 @@ export default function OrbitPlanner({ rocket, parts, plan, onChange }: Props) {
                       : `${kmText(result.periluneAlt)} · ${days(result.periluneHours)}`
                 }
               />
-              <Fact label="Back at the Earth" value={days(result.returnHours)} />
+              {result.flown ? (
+                <>
+                  <Fact
+                    label="Course corrections"
+                    value={`${fmt.format(Math.round(result.flown.correctionDv * 10) / 10)} m/s`}
+                  />
+                  <Fact
+                    label="Back at the Earth"
+                    value={result.flown.outcome === "splashdown" ? days(result.flown.days * 24) : "never"}
+                  />
+                </>
+              ) : (
+                <Fact label="Back at the Earth" value={days(result.returnHours)} />
+              )}
             </dl>
           </>
         )}
@@ -337,15 +350,23 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Legend() {
+/** The corrected path is only worth drawing when the corrections bend it visibly. */
+const showFlown = (r: PlanResult) => !!r.flown && r.flown.path.length > 1 && r.flown.correctionDv >= 1;
+
+function Legend({ corrected }: { corrected: boolean }) {
   return (
     <div className="map-legend small">
       <span>
         <i className="sw out" /> To the Moon
       </span>
       <span>
-        <i className="sw back" /> Way home
+        <i className="sw back" /> {corrected ? "Without corrections" : "Way home"}
       </span>
+      {corrected && (
+        <span>
+          <i className="sw flown" /> With corrections
+        </span>
+      )}
       <span>
         <i className="sw node" /> Burn
       </span>
@@ -366,7 +387,7 @@ function TripMap({ result }: { result: PlanResult }) {
     let maxX = D + 70;
     let minY = -110;
     let maxY = 110;
-    for (const p of [...result.outbound, ...result.inbound]) {
+    for (const p of [...result.outbound, ...result.inbound, ...(result.flown?.path ?? [])]) {
       const x = Mm(p.x);
       const y = -Mm(p.y);
       minX = Math.min(minX, x);
@@ -430,7 +451,15 @@ function TripMap({ result }: { result: PlanResult }) {
       <circle cx={D} cy={0} r={66.1} className="soi" vectorEffect="non-scaling-stroke" />
 
       <path d={toPath(result.outbound)} className="trip out" vectorEffect="non-scaling-stroke" />
-      <path d={toPath(result.inbound)} className="trip back" vectorEffect="non-scaling-stroke" />
+      <path
+        d={toPath(result.inbound)}
+        className={`trip back${showFlown(result) ? " faded" : ""}`}
+        vectorEffect="non-scaling-stroke"
+      />
+      {/* What the flight will really do: the autopilot's course corrections bend the way home. */}
+      {showFlown(result) && (
+        <path d={toPath(result.flown!.path)} className="trip flown" vectorEffect="non-scaling-stroke" />
+      )}
 
       {dayTicks.map((t) => (
         <g key={t.d}>
