@@ -118,6 +118,42 @@ body,
 }
 .panel.right {
   right: 16px;
+  bottom: 356px;
+}
+
+.map-card {
+  position: absolute;
+  right: 16px;
+  bottom: 120px;
+  width: 290px;
+  height: 220px;
+  padding: 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.map-card .map-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.map-card svg {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: block;
+}
+.map-card .phase-mini {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .panel h2 {
   font-size: 12px;
@@ -191,6 +227,11 @@ body,
   display: flex;
   justify-content: space-between;
   align-items: baseline;
+  gap: 12px;
+}
+.gauge-head .label,
+.gauge-head .value {
+  min-width: 0;
 }
 .gauge-head .value {
   font-size: 13px;
@@ -357,6 +398,13 @@ button.primary {
 @media (max-width: 1100px) {
   .panel {
     width: 240px;
+  }
+  .panel.right {
+    bottom: 316px;
+  }
+  .map-card {
+    width: 240px;
+    height: 180px;
   }
   .controls {
     left: 272px;
