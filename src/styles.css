@@ -920,7 +920,7 @@ button.primary.big {
   text-align: left;
   font-weight: 500;
   color: var(--text-dim, inherit);
-  padding-bottom: 2px;
+  padding: 0 4px 2px 0;
 }
 .artemis-compare td {
   padding: 2px 4px 2px 0;

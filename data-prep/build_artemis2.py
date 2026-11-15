@@ -46,8 +46,9 @@ LAUNCH_SOURCE = "https://www.nasa.gov/blogs/missions/2026/04/01/live-artemis-ii-
 
 R_EARTH_KM = 6371.0
 R_MOON_KM = 1737.4
-SAMPLE_EVERY_S = 30 * 60  # keep one point every 30 minutes (and every point near the Moon)
+SAMPLE_EVERY_S = 30 * 60  # keep one point every 30 minutes (and every point near the Earth or the Moon)
 NEAR_MOON_KM = 60000.0
+NEAR_EARTH_KM = 80000.0  # keep every point close to the Earth too, where Orion turns fastest
 
 DEG = math.pi / 180.0
 
@@ -196,8 +197,8 @@ def main() -> None:
     for i, (t, s) in enumerate(rows):
         r = tuple(s[:3])
         tau = (t - LAUNCH_UTC).total_seconds()
-        near_moon = norm(sub(r, moon_eme2000_km(t))) < NEAR_MOON_KM
-        if i not in (0, len(rows) - 1) and not near_moon and tau - last_kept < SAMPLE_EVERY_S:
+        near_body = norm(sub(r, moon_eme2000_km(t))) < NEAR_MOON_KM or norm(r) < NEAR_EARTH_KM
+        if i not in (0, len(rows) - 1) and not near_body and tau - last_kept < SAMPLE_EVERY_S:
             continue
         last_kept = tau
         x, y, z, moon_km = rotating_frame(t)
