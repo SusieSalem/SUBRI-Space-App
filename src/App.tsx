@@ -54,7 +54,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("assembly");
   const [parts, setParts] = useState<PartId[]>(["capsule", "serviceLarge", "lifeSupport7", "solarPanels"]);
   const [rocket, setRocket] = useState<RocketId>("heavy");
-  const [quality, setQuality] = useState<Quality>("high");
+  const [quality, setQuality] = useState<Quality>("low");
   const [mapView, setMapView] = useState(false);
   const [tel, setTel] = useState<Telemetry | null>(null);
   const [warpSetting, setWarpSetting] = useState<number | "auto">("auto");

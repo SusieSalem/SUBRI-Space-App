@@ -180,8 +180,8 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   const skyDefines = useMemo(
     () =>
       quality === "high"
-        ? { VIEW_STEPS: 6, LIGHT_STEPS: 2, CLOUD_STEPS: 12, CLOUD_LIGHT: 2 }
-        : { VIEW_STEPS: 4, LIGHT_STEPS: 2, CLOUD_STEPS: 5, CLOUD_LIGHT: 1 },
+        ? { VIEW_STEPS: 6, LIGHT_STEPS: 2, CLOUD_STEPS: 8, CLOUD_LIGHT: 2, WATER_OCTAVES: 3, WATER_HQ: 1 }
+        : { VIEW_STEPS: 4, LIGHT_STEPS: 1, CLOUD_STEPS: 3, CLOUD_LIGHT: 0, WATER_OCTAVES: 2, WATER_HQ: 0 },
     [quality],
   );
 
@@ -490,7 +490,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     u.uCamUp.value.set(camEci.x / camR, camEci.y / camR, camEci.z / camR);
     u.uCamFromPad.value.set(camEci.x - padEci.x, camEci.y - padEci.y, camEci.z - padEci.z);
     const east = ecefToEci({ x: 1, y: 0, z: 0 }, t);
+    const north = ecefToEci({ x: 0, y: 0, z: 1 }, t);
     u.uPadEast.value.set(east.x, east.y, east.z);
+    u.uPadNorth.value.set(north.x, north.y, north.z);
     const moon = moonPosition(t);
     u.uMoonRel.value.set(moon.x - camEci.x, moon.y - camEci.y, moon.z - camEci.z);
     u.uEarthAngle.value = earthAngle(t);
@@ -599,7 +601,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         intensity={3.4}
         color="#fff4e6"
         castShadow
-        shadow-mapSize={quality === "high" ? [1024, 1024] : [512, 512]}
+        shadow-mapSize={quality === "high" ? [1024, 1024] : [192, 192]}
         shadow-bias={-0.0004}
         shadow-normalBias={0.04}
         shadow-camera-left={-90}
@@ -665,7 +667,6 @@ export default function FlightScene(props: Props) {
           <Vignette offset={0.25} darkness={0.55} />
         </EffectComposer>
       ) : (
-        // Low: no bloom or vignette, just the tone mapping.
         <EffectComposer multisampling={0}>
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
         </EffectComposer>
