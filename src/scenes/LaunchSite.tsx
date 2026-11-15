@@ -81,7 +81,7 @@ export default function LaunchSite({ rocket, parts, armSwing }: { rocket: Rocket
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <circleGeometry args={[700, 96]} />
-        <meshStandardMaterial map={tex} transparent roughness={0.95} depthWrite={false} />
+        <meshStandardMaterial map={tex} transparent alphaTest={0.05} roughness={0.95} depthWrite />
       </mesh>
 
       {/* Launch mount with flame trench */}

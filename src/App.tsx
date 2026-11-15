@@ -22,7 +22,8 @@ import {
   type StormResult,
 } from "./core/spaceWeather";
 import { playAlert } from "./audio/soundManager";
-import type { Quality, Telemetry, WarpControl } from "./scenes/FlightScene";
+import { TutorialOverlay } from "./components/TutorialOverlay";
+import type { Quality, Telemetry, WarpControl, WeatherState } from "./scenes/FlightScene";
 
 // The 3D scene and the planner are the heavy parts: load them as separate
 // chunks so the interface shows up while three.js is still downloading.
@@ -111,6 +112,9 @@ export default function App() {
   /** The plan the current flight is flying (null: the autopilot planned it). */
   const [flownPlan, setFlownPlan] = useState<OrbitPlan | null>(null);
   const [quality, setQuality] = useState<Quality>("low");
+  const [weather, setWeather] = useState<WeatherState>("cloudy");
+  const [tutorialOpen, setTutorialOpen] = useState(true);
+  const [spaceAiOpen, setSpaceAiOpen] = useState(false);
   const [launchDate, setLaunchDate] = useState<string>("2026-07-20");
   const [timeOfDay, setTimeOfDay] = useState<number>(8.6);
   const [syncCycle, setSyncCycle] = useState<boolean>(true);
@@ -262,6 +266,7 @@ export default function App() {
           keys={keys}
           mapView={mapView}
           quality={quality}
+          weather={weather}
           launchDate={launchDate}
           timeOfDay={timeOfDay}
           syncCycle={syncCycle}
@@ -418,6 +423,8 @@ export default function App() {
                 onTimeChange={handleTimeChange}
                 syncCycle={syncCycle}
                 onSyncChange={setSyncCycle}
+                weather={weather}
+                onWeatherChange={setWeather}
               />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
@@ -443,6 +450,16 @@ export default function App() {
             </div>
           </footer>
         </>
+      )}
+
+      {mode !== "planning" && (
+        <TutorialOverlay
+          persona={mode === "flight" ? "space" : "earth"}
+          open={mode === "flight" ? spaceAiOpen : tutorialOpen}
+          onOpenChange={mode === "flight" ? setSpaceAiOpen : setTutorialOpen}
+          flightPhase={tel?.phase}
+          altitudeM={tel?.altitude}
+        />
       )}
 
       {mode === "flight" && tel && (
@@ -529,6 +546,8 @@ export default function App() {
                 onTimeChange={handleTimeChange}
                 syncCycle={syncCycle}
                 onSyncChange={setSyncCycle}
+                weather={weather}
+                onWeatherChange={setWeather}
               />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
@@ -623,6 +642,13 @@ function Bar({ label, fill }: { label: string; fill: number }) {
   );
 }
 
+const WEATHER_OPTIONS: { id: WeatherState; label: string }[] = [
+  { id: "clear", label: "Clear" },
+  { id: "cloudy", label: "Cloudy" },
+  { id: "rain", label: "Rain" },
+  { id: "storm", label: "Storm" },
+];
+
 function EnvironmentControls({
   launchDate,
   onDateChange,
@@ -630,6 +656,8 @@ function EnvironmentControls({
   onTimeChange,
   syncCycle,
   onSyncChange,
+  weather,
+  onWeatherChange,
 }: {
   launchDate: string;
   onDateChange: (d: string) => void;
@@ -637,9 +665,23 @@ function EnvironmentControls({
   onTimeChange: (t: number) => void;
   syncCycle: boolean;
   onSyncChange: (v: boolean) => void;
+  weather: WeatherState;
+  onWeatherChange: (w: WeatherState) => void;
 }) {
   return (
     <div className="env-controls">
+      <div className="env-weather" title="Launch site weather state (Storm enables volumetric cloud flashes & lightning bolts)">
+        {WEATHER_OPTIONS.map((w) => (
+          <button
+            key={w.id}
+            type="button"
+            className={weather === w.id ? "on" : ""}
+            onClick={() => onWeatherChange(w.id)}
+          >
+            {w.label}
+          </button>
+        ))}
+      </div>
       <button
         type="button"
         className={`env-sync ${syncCycle ? "on" : ""}`}
