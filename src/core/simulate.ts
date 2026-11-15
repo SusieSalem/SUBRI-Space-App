@@ -7,11 +7,12 @@
 //
 // Nothing here draws anything. The scene reads the state and the event list.
 
-import { PARTS_BY_ID, type PartId } from "./design";
+import { MISSION_REQUIREMENTS, PARTS_BY_ID, type PartId } from "./design";
 import type { RocketId } from "./launchCheck";
 import {
   ATMOSPHERE_TOP,
   G0,
+  MOON_DISTANCE,
   MU_EARTH,
   R_EARTH,
   R_MOON,
@@ -59,6 +60,13 @@ export const PAD_ECEF: Vec3 = { x: 0, y: R_EARTH, z: 0 };
 
 const RETURN_PERIGEE_TARGET = 52000;
 const PERILUNE_TARGET = R_MOON + 4500000;
+/** Transfer apogees tried by the autopilot, as a share of the Moon's distance. */
+const TLI_APOGEE_FACTORS = [1.0, 1.05, 1.1, 1.15, 1.2, 1.3];
+/**
+ * Farthest pass by the Moon still counted as a swing round it. With the Moon going
+ * round the right way, free returns pass 5,000-25,000 km from it.
+ */
+const FREE_RETURN_MAX_PERILUNE = 30000000;
 const PHYSICS_DT = 0.02; // 50 Hz
 const MAX_G = 4;
 /** Service module delta-v kept back for course corrections (m/s). */
@@ -753,6 +761,16 @@ export class FlightSim {
     return t2 + tS;
   }
 
+  /**
+   * How long before the ideal (instant) burn point to light the engine: the time it
+   * takes to build up half of the burn's delta-v. For a burn the upper stage does
+   * alone this is about half the burn; when the weak service-module engine has to
+   * finish it, the midpoint comes much earlier than half the burn time.
+   */
+  private tliLeadTime(dv: number): number {
+    return this.tliBurnTime(dv / 2);
+  }
+
   /** Seconds to keep clear before the burn point, so a burn centred on it can start in time. */
   tliLead(): number {
     return 60 + this.tliBurnTime(3300) / 2;
@@ -770,7 +788,7 @@ export class FlightSim {
     const burn = findPhaseCrossing(start, plan.phaseDeg, this.tliLead());
     const r = vlen(burn.r);
     const speed = vlen(burn.v) + plan.tliDvMs;
-    this.tliStart = Math.max(this.t, burn.t - this.tliBurnTime(plan.tliDvMs) / 2);
+    this.tliStart = Math.max(this.t, burn.t - this.tliLeadTime(plan.tliDvMs));
     this.tliEnergy = (speed * speed) / 2 - MU_EARTH / r;
     this.emit(
       "message",
@@ -787,94 +805,110 @@ export class FlightSim {
     const info = orbitInfo(start.r, start.v);
     const period = isFinite(info.period) ? info.period : 5400;
     const { available } = this.tliBudget();
-    // On an eccentric orbit the burn is far cheaper near perigee, so look over a few orbits.
+    const maxDv = available * 0.94; // ~6% margin for finite-burn losses
+
+    // 1. For each transfer energy (apogee as a share of the Moon's distance), find when
+    //    to burn so the coast passes near the Moon.
     const orbits = info.eccentricity > 0.02 ? 4 : 1.05;
-    const samples = Math.round(150 * Math.min(orbits, 2));
-    let best = { score: Infinity, t: Infinity, energy: Infinity, dv: 0, miss: 0 };
+    const samples = Math.round(120 * Math.min(orbits, 2));
+    type Cand = { miss: number; s: CoastState; vNeeded: number; dv: number };
+    const perRa = new Map<number, Cand>();
     let s = advanceCoast(start, 300);
     for (let k = 0; k < samples; k++) {
       const r = vlen(s.r);
       const speed = vlen(s.v);
-      for (const raFactor of [0.97, 1.04]) {
-        const ra = 384400000 * raFactor;
+      for (const raFactor of TLI_APOGEE_FACTORS) {
+        const ra = MOON_DISTANCE * raFactor;
         const vNeeded = Math.sqrt(MU_EARTH * (2 / r - 2 / (r + ra)));
         const dv = vNeeded - speed;
-        // Leave ~6% margin for finite-burn losses.
-        if (dv > available * 0.94) continue;
+        if (dv > maxDv) continue;
         const res = propagate({ t: s.t, r: s.r, v: vscale(vnorm(s.v), vNeeded) }, 6 * 86400, { stopAlt: -1e9, maxStep: 900 });
         if (res.hitMoon) continue;
-        // Among departures that really reach the Moon (within ~15,000 km of the target pass),
-        // prefer the cheapest; a bigger miss is only taken if nothing better exists.
         const miss = Math.abs(res.minMoonDist - PERILUNE_TARGET);
-        const score = (miss > 15000000 ? 1000 + miss / 1e6 : miss / 1e6) + dv / 25;
-        if (score < best.score) best = { score, t: s.t, energy: (vNeeded * vNeeded) / 2 - MU_EARTH / r, dv, miss: res.minMoonDist - R_MOON };
+        const prev = perRa.get(raFactor);
+        if (!prev || miss < prev.miss) perRa.set(raFactor, { miss, s, vNeeded, dv });
       }
       s = advanceCoast(s, (period * orbits) / samples);
     }
-    if (!isFinite(best.t)) {
+    if (perRa.size === 0) {
       this.tliStart = Infinity;
       this.emit("message", "No trans-lunar injection possible: the upper stage does not have enough propellant left.");
       return;
     }
-    // Finite burn: start half the burn time before the impulsive point.
-    this.tliStart = best.t - this.tliBurnTime(best.dv) / 2;
-    this.tliEnergy = best.energy;
-    this.emit("message", `Trans-lunar injection planned in ${Math.round((this.tliStart - this.t) / 60)} min (${Math.round(best.dv)} m/s, passing ${Math.round(best.miss / 1000)} km from the Moon)`);
+
+    // 2. At each of those departures, trim the burn so the Moon swings the spacecraft
+    //    straight back into the entry corridor (a free return), and keep the one that
+    //    gets the crew home within the mission's days for the least delta-v.
+    const maxDays = MISSION_REQUIREMENTS.durationDays;
+    let best: { score: number; c: Cand; dvTrim: number; days: number } | null = null;
+    for (const c of perRa.values()) {
+      const dir = vnorm(c.s.v);
+      const base: CoastState = { t: c.s.t, r: c.s.r, v: vscale(dir, c.vNeeded) };
+      const f = (d: number) => freeReturn(base, vscale(dir, d)).pe - RETURN_PERIGEE_TARGET;
+      let trim: number | null = null;
+      let prevD = -20;
+      let prevF = f(prevD);
+      for (let d = -19; d <= 20 && trim === null; d += 1) {
+        const fd = f(d);
+        if (isFinite(prevF) && isFinite(fd) && Math.abs(prevF) < 5e8 && Math.abs(fd) < 5e8 && Math.sign(fd) !== Math.sign(prevF)) {
+          let lo = prevD;
+          let hi = d;
+          let flo = prevF;
+          for (let i = 0; i < 12; i++) {
+            const mid = (lo + hi) / 2;
+            const fm = f(mid);
+            if (isFinite(fm) && Math.sign(fm) === Math.sign(flo)) {
+              lo = mid;
+              flo = fm;
+            } else hi = mid;
+          }
+          trim = (lo + hi) / 2;
+        }
+        prevD = d;
+        prevF = fd;
+      }
+      if (trim === null || c.dv + trim > maxDv) continue;
+      const days = (freeReturn(base, vscale(dir, trim)).t - this.t) / 86400;
+      const score = (c.dv + trim) / 25 + Math.max(0, days - (maxDays - 0.5)) * 20;
+      if (!best || score < best.score) best = { score, c, dvTrim: trim, days };
+    }
+
+    // No free return found: fall back to the departure that passes nearest the target,
+    // and let the course corrections do the rest.
+    const pick =
+      best ?? { c: [...perRa.values()].reduce((a, b) => (b.miss / 1e6 + b.dv / 25 < a.miss / 1e6 + a.dv / 25 ? b : a)), dvTrim: 0, days: NaN };
+    const vBurn = pick.c.vNeeded + pick.dvTrim;
+    const dv = pick.c.dv + pick.dvTrim;
+    const rB = vlen(pick.c.s.r);
+    // Finite burn: light up so that half the delta-v is in by the ideal burn point.
+    this.tliStart = pick.c.s.t - this.tliLeadTime(dv);
+    this.tliEnergy = (vBurn * vBurn) / 2 - MU_EARTH / rB;
+    this.emit(
+      "message",
+      `Trans-lunar injection planned in ${Math.round((this.tliStart - this.t) / 60)} min (${Math.round(dv)} m/s${
+        isFinite(pick.days) ? `, free return home in ${pick.days.toFixed(1)} days` : ""
+      })`,
+    );
   }
 
-  /** Prograde/retrograde correction that brings the return perigee down to ~45 km. */
+  /**
+   * Course correction that brings the return perigee into the entry corridor. Before the
+   * flyby a prograde burn is tried first and a sideways one (in the orbit plane) if that
+   * needs more; on the way home the sideways burn is the effective one.
+   */
   private planTcm() {
     const base: CoastState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
     const after = this.flybyPassed;
-    // On the way home the velocity points almost straight at the Earth, so a sideways
-    // (in-plane, perpendicular) burn changes the perigee far more than a prograde one.
-    const dir = after ? vnorm(vcross(vcross(this.r, this.v), this.v)) : vnorm(this.v);
-    this.tcmDir = dir;
-    const f = (dv: number) => returnPerigee(base, vscale(dir, dv), after) - RETURN_PERIGEE_TARGET;
-    let bestDv = 0;
-    const f0 = f(0);
-    // NaN means the uncorrected path hits (or skims) the Moon: any valid correction is better.
-    let bestErr = Number.isFinite(f0) ? Math.abs(f0) : Infinity;
-    // Before the flyby the return is extremely sensitive to small burns, so sample finely
-    // near zero and coarsely further out. After the flyby the response is smooth.
-    const samples: number[] = [];
-    if (after) {
-      for (let dv = -120; dv <= 120; dv += 3) samples.push(dv);
-    } else {
-      for (let dv = -60; dv < -10; dv += 4) samples.push(dv);
-      for (let dv = -10; dv <= 10; dv += 0.5) samples.push(dv);
-      for (let dv = 14; dv <= 60; dv += 4) samples.push(dv);
-    }
-    let prevDv = samples[0];
-    let prevF = f(prevDv);
-    for (const dv of samples.slice(1)) {
-      const fv = f(dv);
-      if (Math.abs(fv) < bestErr) {
-        bestErr = Math.abs(fv);
-        bestDv = dv;
-      }
-      if (isFinite(fv) && isFinite(prevF) && Math.sign(fv) !== Math.sign(prevF)) {
-        let lo = prevDv;
-        let hi = dv;
-        let flo = prevF;
-        for (let i = 0; i < 30; i++) {
-          const mid = (lo + hi) / 2;
-          const fm = f(mid);
-          if (Math.sign(fm) === Math.sign(flo)) {
-            lo = mid;
-            flo = fm;
-          } else hi = mid;
-        }
-        const cand = (lo + hi) / 2;
-        if (Math.abs(cand) < Math.abs(bestDv) || bestErr > 5000) {
-          bestDv = cand;
-          bestErr = Math.abs(f(cand));
-        }
-      }
-      prevDv = dv;
-      prevF = fv;
-    }
-    this.tcmDv = bestDv;
+    const prograde = vnorm(this.v);
+    const sideways = vnorm(vcross(vcross(this.r, this.v), this.v));
+    const options = after ? [solveTcm(base, sideways, true)] : [solveTcm(base, prograde, false)];
+    if (!after && !(options[0].err < 50000 && Math.abs(options[0].dv) < 15)) options.push(solveTcm(base, sideways, false));
+    const good = options.filter((o) => o.err < 50000);
+    const pick = good.length
+      ? good.reduce((x, y) => (Math.abs(y.dv) < Math.abs(x.dv) ? y : x))
+      : options.reduce((x, y) => (y.err < x.err ? y : x));
+    this.tcmDir = pick.dir;
+    this.tcmDv = pick.dv;
   }
 
   /** Predicted path for drawing, as ECI points. */
@@ -906,22 +940,79 @@ function advanceCoast(s: CoastState, seconds: number): CoastState {
   return st;
 }
 
-/** Vacuum perigee altitude of the return leg after applying dv along the velocity now. */
-export function returnPerigee(base: CoastState, dv: Vec3, afterFlyby = false): number {
+/** Burn along `dir` (m/s, signed) that puts the return perigee on target, and how far off it ends up (m). */
+function solveTcm(base: CoastState, dir: Vec3, afterFlyby: boolean): { dir: Vec3; dv: number; err: number } {
+  // 1e9 means "never came back": treat it like NaN so it doesn't fake a sign change.
+  const f = (dv: number) => {
+    const pe = returnPerigee(base, vscale(dir, dv), afterFlyby);
+    return Math.abs(pe) < 5e8 ? pe - RETURN_PERIGEE_TARGET : NaN;
+  };
+  let bestDv = 0;
+  const f0 = f(0);
+  let bestErr = Number.isFinite(f0) ? Math.abs(f0) : Infinity;
+  // Before the flyby the return is extremely sensitive to small burns, so sample finely
+  // near zero and coarsely further out. After the flyby the response is smooth.
+  const samples: number[] = [];
+  if (afterFlyby) {
+    for (let dv = -150; dv <= 150; dv += 3) samples.push(dv);
+  } else {
+    for (let dv = -60; dv < -20; dv += 2) samples.push(dv);
+    for (let dv = -20; dv <= 20; dv += 0.5) samples.push(dv);
+    for (let dv = 22; dv <= 60; dv += 2) samples.push(dv);
+  }
+  let prevDv = samples[0];
+  let prevF = f(prevDv);
+  for (const dv of samples.slice(1)) {
+    const fv = f(dv);
+    if (Math.abs(fv) < bestErr) {
+      bestErr = Math.abs(fv);
+      bestDv = dv;
+    }
+    if (isFinite(fv) && isFinite(prevF) && Math.sign(fv) !== Math.sign(prevF)) {
+      let lo = prevDv;
+      let hi = dv;
+      let flo = prevF;
+      for (let i = 0; i < 30; i++) {
+        const mid = (lo + hi) / 2;
+        const fm = f(mid);
+        if (isFinite(fm) && Math.sign(fm) === Math.sign(flo)) {
+          lo = mid;
+          flo = fm;
+        } else hi = mid;
+      }
+      const cand = (lo + hi) / 2;
+      const err = Math.abs(f(cand));
+      if (isFinite(err) && (bestErr > 5000 || Math.abs(cand) < Math.abs(bestDv))) {
+        bestDv = cand;
+        bestErr = err;
+      }
+    }
+    prevDv = dv;
+    prevF = fv;
+  }
+  return { dir, dv: bestDv, err: bestErr };
+}
+
+/**
+ * The way home after applying dv now: vacuum perigee altitude and the time the
+ * spacecraft gets there. pe is NaN for a pass too close to the Moon or too far
+ * from it to swing round, 1e9 if it never comes back.
+ */
+export function freeReturn(base: CoastState, dv: Vec3, afterFlyby = false): { pe: number; t: number } {
   let s: CoastState = { t: base.t, r: vcopy(base.r), v: vadd(base.v, dv) };
-  const end = base.t + 9 * 86400;
+  const end = base.t + 14 * 86400;
   let passedMoon = afterFlyby;
   let prevMoonDist = Infinity;
   while (s.t < end) {
     s = coastRk4(s, coastStep(s.r, s.v, s.t, 300));
     const m = moonPosition(s.t);
     const dm = Math.hypot(s.r.x - m.x, s.r.y - m.y, s.r.z - m.z);
-    if (dm < R_MOON + 250000) return NaN; // passes too close to (or into) the Moon
+    if (dm < R_MOON + 250000) return { pe: NaN, t: s.t }; // passes too close to (or into) the Moon
     if (!passedMoon) {
       if (dm > prevMoonDist && dm < 80000000) {
         passedMoon = true;
         // Only accept flybys that actually swing round the Moon (not a distant miss).
-        if (prevMoonDist > R_MOON + 20000000) return NaN;
+        if (prevMoonDist > R_MOON + FREE_RETURN_MAX_PERILUNE) return { pe: NaN, t: s.t };
       }
       prevMoonDist = dm;
       continue;
@@ -929,9 +1020,15 @@ export function returnPerigee(base: CoastState, dv: Vec3, afterFlyby = false): n
     const r = vlen(s.r);
     if (r < 60000000 && vdot(s.r, s.v) < 0) {
       // Earth dominates from here: two-body perigee is a good estimate.
-      return orbitInfo(s.r, s.v).periapsisAlt;
+      const o = orbitInfo(s.r, s.v);
+      return { pe: o.periapsisAlt, t: s.t + (isFinite(o.timeToPeriapsis) ? o.timeToPeriapsis : 0) };
     }
   }
-  return 1e9; // never came back
+  return { pe: 1e9, t: end }; // never came back
+}
+
+/** Vacuum perigee altitude of the return leg after applying dv along the velocity now. */
+export function returnPerigee(base: CoastState, dv: Vec3, afterFlyby = false): number {
+  return freeReturn(base, dv, afterFlyby).pe;
 }
 

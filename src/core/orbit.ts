@@ -3,7 +3,8 @@
 //
 // Frame: Earth-centred inertial (ECI), metres and seconds, double precision.
 // The Earth spins about -Z, so a point on the equator moves towards +X ("east"
-// at the pad). The Moon orbits in the XY plane, so a due-east launch from the
+// at the pad). The Moon orbits in the XY plane the same way round (prograde, like
+// the real one), so a due-east launch from the
 // equator keeps the whole mission in one plane.
 // Plain TypeScript, no rendering code, so it can be tested in Node.
 
@@ -297,8 +298,12 @@ export function astronomicalMoonDirectionAt(
 
 /* --------------------------------------------------------------- bodies */
 
-/** Angle of the Moon on its orbit at time t. */
-export const moonAngle = (t: number) => MOON_ANGLE0 + MOON_RATE * t;
+/**
+ * Angle of the Moon on its orbit at time t. The Moon goes round the same way the
+ * Earth spins (clockwise seen from +Z in this frame, see ecefToEci), as the real
+ * one does, so a spacecraft launched east is already moving the Moon's way.
+ */
+export const moonAngle = (t: number) => MOON_ANGLE0 - MOON_RATE * t;
 
 export function moonPosition(t: number): Vec3 {
   const a = moonAngle(t);
@@ -308,7 +313,7 @@ export function moonPosition(t: number): Vec3 {
 export function moonVelocity(t: number): Vec3 {
   const a = moonAngle(t);
   const v = MOON_DISTANCE * MOON_RATE;
-  return { x: -v * Math.sin(a), y: v * Math.cos(a), z: 0 };
+  return { x: v * Math.sin(a), y: -v * Math.cos(a), z: 0 };
 }
 
 /** Earth rotation angle at time t (radians); t = 0 is the start of the countdown. */
