@@ -23,6 +23,9 @@
   --glass-glow: 0 0 0 1px rgba(95, 168, 255, 0.35), 0 0 14px rgba(95, 168, 255, 0.22);
   --glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   --faint-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  /* Header text sits straight on the scene, which can be bright sky. */
+  --header-text-shadow: 0 0 2px rgba(0, 0, 0, 0.95), 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7),
+    0 0 22px rgba(0, 0, 0, 0.45);
 
   font-family: "Space Grotesk", system-ui, sans-serif;
   color: var(--text);
@@ -121,10 +124,12 @@ body,
   letter-spacing: 0.2em;
   text-transform: uppercase;
   font-size: 14px;
+  text-shadow: var(--header-text-shadow);
 }
 .brand-sub {
   color: var(--muted);
   font-size: 12px;
+  text-shadow: var(--header-text-shadow);
 }
 .met {
   position: absolute;
@@ -452,11 +457,16 @@ button.primary:hover:not(:disabled) {
   filter: brightness(1.08);
 }
 
-/* Bottom controls: one glass capsule */
+/* Bottom controls: one glass capsule, sized to its content and centred.
+   --controls-inset keeps it clear of the side panels (panel width + both gutters). */
 .controls {
+  --controls-inset: 322px;
   position: absolute;
-  left: 322px;
-  right: 322px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 2 * var(--controls-inset));
+  justify-content: center;
   bottom: 16px;
   padding: 12px 18px;
   display: flex;
@@ -508,39 +518,181 @@ button.primary:hover:not(:disabled) {
   border-left: 1px solid var(--glass-border);
 }
 
-/* Speed: segmented control */
-.speed {
-  position: relative;
+/* Time warp stepper: ◀ 100x ▶ */
+.warp {
   display: flex;
+  align-items: center;
   gap: 2px;
-  margin-left: 9px;
   padding: 3px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--glass-border);
   border-radius: var(--glass-pill);
 }
-.speed::before {
-  content: "";
-  position: absolute;
-  left: -10px;
-  top: 4px;
-  bottom: 4px;
-  width: 1px;
-  background: var(--glass-border);
-}
-.speed button {
-  padding: 5px 11px;
+.warp button {
+  display: grid;
+  place-items: center;
+  padding: 5px 8px;
   background: transparent;
   border-color: transparent;
   border-radius: var(--glass-pill);
 }
-.speed button:hover:not(:disabled) {
+.warp button:hover:not(:disabled) {
   background: var(--glass-bg-hi);
   border-color: transparent;
 }
-.speed button.on {
-  background: rgba(255, 255, 255, 0.14);
+.warp-value {
+  min-width: 5ch;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.warp .warp-auto {
+  padding: 5px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.warp .warp-auto.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(95, 168, 255, 0.14);
+  box-shadow: var(--glass-highlight), var(--glass-glow);
+}
+.warp-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 2px;
+  background: var(--glass-border);
+}
+
+/* Flight footer: button roles */
+.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+button.ghost {
+  color: var(--muted);
+  background: transparent;
+  border-color: transparent;
+}
+button.ghost:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--glass-bg-hi);
   border-color: var(--glass-border);
+}
+button.accent {
+  font-weight: 600;
+  min-width: 7.5em; /* same width for Pause and Resume, so the bar doesn't shift */
+  justify-content: center;
+  color: #fff;
+  background: rgba(95, 168, 255, 0.24);
+  border-color: var(--accent);
+  border-radius: var(--glass-pill);
+  box-shadow: var(--glass-highlight), var(--glass-glow);
+}
+button.accent:hover:not(:disabled) {
+  background: rgba(95, 168, 255, 0.34);
+  border-color: var(--accent);
+}
+.view-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.view-group > .label {
+  margin-right: 2px;
+}
+
+/* Footer: icon-only buttons and group separators */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  flex: none;
+}
+.icon-glyph {
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1;
+}
+.sep {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 4px;
+  background: var(--glass-border);
+}
+
+/* Footer popovers (settings, keyboard help): glass panel opening upward */
+.popover-anchor {
+  position: relative;
+  flex: none;
+}
+.popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 16px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: max-content;
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 14px 16px;
+  /* More opaque than --glass-bg: a blur nested inside the footer's blur samples nothing behind it. */
+  background: rgba(10, 14, 22, 0.9);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  text-shadow: var(--glass-text-shadow);
+  text-align: left;
+}
+.settings-panel > * + * {
+  padding-top: 12px;
+  border-top: 1px solid var(--glass-border);
+}
+.settings-panel .env-controls {
+  flex-wrap: wrap;
+  margin-left: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.shortcuts {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+}
+.shortcuts > div {
+  display: grid;
+  grid-template-columns: 9.5em 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.shortcuts dt {
+  display: flex;
+  gap: 4px;
+}
+.shortcuts dd {
+  margin: 0;
+  color: var(--muted);
+}
+.shortcuts kbd {
+  font-family: inherit;
+  font-size: 11px;
+  min-width: 1.9em;
+  padding: 2px 6px;
+  text-align: center;
+  background: var(--glass-bg-hi);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
   box-shadow: var(--glass-highlight);
 }
 
@@ -602,6 +754,11 @@ button.primary:hover:not(:disabled) {
   color: var(--muted);
   flex-basis: 100%;
 }
+/* Adds nothing to the bar's width: it takes the width of the button row and wraps. */
+.controls .why {
+  contain: inline-size;
+  text-align: center;
+}
 
 @media (max-width: 1100px) {
   .panel {
@@ -622,8 +779,7 @@ button.primary:hover:not(:disabled) {
     height: 140px;
   }
   .controls {
-    left: 272px;
-    right: 272px;
+    --controls-inset: 272px;
     flex-direction: column;
     align-items: stretch;
     row-gap: 10px;
@@ -635,12 +791,6 @@ button.primary:hover:not(:disabled) {
     flex-wrap: wrap;
     padding-left: 0;
     border-left: 0;
-  }
-  .speed {
-    margin-left: auto;
-  }
-  .speed::before {
-    display: none;
   }
   .panel,
   .map-card,
@@ -656,9 +806,6 @@ button.primary:hover:not(:disabled) {
 .panel.right.assembly {
   bottom: 120px;
 }
-.mode-assembly .controls {
-  justify-content: center;
-}
 .steps {
   display: flex;
   gap: 8px;
@@ -672,8 +819,9 @@ button.primary:hover:not(:disabled) {
   border: 1px solid var(--glass-border);
   border-radius: var(--glass-pill);
   color: var(--muted);
-  background: rgba(10, 14, 22, 0.45);
-  box-shadow: var(--glass-highlight);
+  background: var(--glass-bg);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  text-shadow: var(--header-text-shadow);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   transition: all 0.25s ease;
@@ -681,14 +829,18 @@ button.primary:hover:not(:disabled) {
 .step.on {
   color: #fff;
   border-color: rgba(95, 168, 255, 0.65);
-  background: rgba(95, 168, 255, 0.16);
+  background: linear-gradient(rgba(95, 168, 255, 0.2), rgba(95, 168, 255, 0.2)), var(--glass-bg);
   box-shadow: var(--glass-glow), var(--glass-highlight);
   font-weight: 600;
 }
+/* Done: keep the dark glass so it stays readable over sky; green comes from text, border and a check. */
 .step.done {
   color: var(--ok);
-  border-color: rgba(74, 222, 128, 0.4);
-  background: rgba(74, 222, 128, 0.1);
+  border-color: rgba(74, 222, 128, 0.6);
+  background: linear-gradient(rgba(74, 222, 128, 0.12), rgba(74, 222, 128, 0.12)), var(--glass-bg);
+}
+.step.done::before {
+  content: "✓ ";
 }
 button.primary.big {
   padding: 14px 44px;
@@ -861,13 +1013,6 @@ button.primary.big {
 .hud-grid .value {
   font-size: 13px;
 }
-.mode-ascent .controls,
-.mode-space .controls {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-  width: min(720px, calc(100% - 32px));
-}
 
 .fade {
   position: absolute;
@@ -909,25 +1054,18 @@ button.primary.big {
 .hud-bar .bar-fill {
   border-radius: var(--glass-pill);
 }
+/* No side panels reach the bottom in flight (the HUD stops above the bar). */
 .mode-flight .controls {
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
-  width: fit-content;
-  max-width: calc(100% - 32px);
-  border-radius: var(--glass-radius);
-  justify-content: center;
+  --controls-inset: 16px;
 }
 .mode-flight .controls .buttons {
   flex: 1 1 auto;
-  flex-wrap: wrap;
+  /* One row: [Pause] [Edit plan] | [Auto] [warp] | [Map] [Earth] [Moon] | [⚙] [?] */
+  flex-wrap: nowrap;
+  white-space: nowrap;
   justify-content: center;
   padding-left: 0;
   border-left: none;
-}
-.mode-flight .controls .why {
-  width: 100%;
-  text-align: center;
 }
 /* The footers hold many controls: let them wrap instead of running off screen. */
 .controls .buttons {
@@ -936,11 +1074,6 @@ button.primary.big {
   row-gap: 6px;
   padding-left: 0;
   border-left: none;
-}
-.mode-flight .speed button {
-  padding: 6px 10px;
-  font-size: 12px;
-  border-radius: var(--glass-pill);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1324,9 +1457,6 @@ button.suggest {
 .plan-facts dd {
   text-align: right;
   font-size: 12px;
-}
-.mode-planning .controls {
-  justify-content: center;
 }
 
 @media (max-width: 1100px) {
