@@ -1,0 +1,60 @@
+{
+  "id": "moon",
+  "name": "Moon (Luna)",
+  "radiusKm": 1737.4,
+  "muKm3s2": 4902.8,
+  "rotationPeriodSec": 2360591,
+  "textureUrl": "/data/moon/lro_moon_color.jpg",
+  "hasAtmosphereDrag": false,
+  "archivedDataNotice": "Archived real lunar geophysical constants and polar target coordinates from NASA NSSDCA and Lunar Reconnaissance Orbiter (LRO).",
+  "scenario": {
+    "id": "ice_hunter",
+    "title": "Ice Hunter (Moon)",
+    "celestialBodyId": "moon",
+    "goal": "Map water ice deposits inside Permanently Shadowed Regions (PSRs) at both lunar poles to support future Artemis surface habitats.",
+    "requirements": {
+      "budgetM": 300,
+      "missionDurationYears": 1,
+      "missionDurationDays": 365,
+      "requireBothPoles": true,
+      "minInclinationDeg": 85,
+      "maxGroundResolutionKm": 0.5,
+      "minTargetsDetected": 8
+    },
+    "rocketPayloadMultiplier": 0.35,
+    "educationalNote": "Unlike Earth, the Moon has no atmosphere to slow satellites down, but lumpy gravity anomalies ('mascons') perturb low orbits unless you pick a stable frozen inclination or carry station-keeping fuel."
+  },
+  "groundStations": [
+    {
+      "id": "dsn_goldstone",
+      "name": "NASA DSN Goldstone (California)",
+      "lat": 35.4267,
+      "lon": -116.89,
+      "network": "NASA Deep Space Network / SCaN"
+    },
+    {
+      "id": "dsn_madrid",
+      "name": "NASA DSN Madrid (Spain)",
+      "lat": 40.4314,
+      "lon": -4.2481,
+      "network": "NASA Deep Space Network / SCaN"
+    },
+    {
+      "id": "dsn_canberra",
+      "name": "NASA DSN Canberra (Australia)",
+      "lat": -35.4014,
+      "lon": 148.9817,
+      "network": "NASA Deep Space Network / SCaN"
+    }
+  ],
+  "sources": [
+    {
+      "label": "NASA NSSDCA Moon Fact Sheet",
+      "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/moonfact.html"
+    },
+    {
+      "label": "NASA Lunar Reconnaissance Orbiter (LRO) Mission Overview",
+      "url": "https://lunar.gsfc.nasa.gov/"
+    }
+  ]
+}

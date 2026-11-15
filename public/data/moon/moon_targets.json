@@ -1,0 +1,153 @@
+{
+  "dataset": "NASA LRO / LCROSS Lunar Polar Water-Ice Targets (Archived)",
+  "description": "Permanently Shadowed Regions (PSRs) at the Lunar South and North Poles where cryogenic temperatures (< 110 K) trap water ice.",
+  "sourceLabel": "NASA Lunar Reconnaissance Orbiter (LRO) & LCROSS Polar Volatiles Archive",
+  "sourceUrl": "https://lunar.gsfc.nasa.gov/science.html",
+  "targets": [
+    {
+      "id": "psr_shackleton",
+      "name": "Shackleton Crater",
+      "pole": "south",
+      "lat": -89.9,
+      "lon": 0.0,
+      "diameterKm": 21.0,
+      "floorTempK": 40,
+      "iceConcentrationPct": 8.5,
+      "scienceValue": 100,
+      "notes": "Located directly at the Lunar South Pole; crater floor is permanently shadowed while rim peaks receive near-continuous sunlight (Artemis III candidate region)."
+    },
+    {
+      "id": "psr_cabeus",
+      "name": "Cabeus Crater (LCROSS Impact Site)",
+      "pole": "south",
+      "lat": -84.9,
+      "lon": -35.5,
+      "diameterKm": 98.0,
+      "floorTempK": 38,
+      "iceConcentrationPct": 5.6,
+      "scienceValue": 95,
+      "notes": "Site where NASA's LCROSS impactor confirmed 5.6 ± 2.9% water ice by mass in the ejected plume in October 2009."
+    },
+    {
+      "id": "psr_shoemaker",
+      "name": "Shoemaker Crater",
+      "pole": "south",
+      "lat": -88.1,
+      "lon": 44.9,
+      "diameterKm": 51.8,
+      "floorTempK": 35,
+      "iceConcentrationPct": 7.2,
+      "scienceValue": 90,
+      "notes": "Deep polar cold trap showing strong hydrogen suppression of epithermal neutrons in NASA LRO LEND measurements."
+    },
+    {
+      "id": "psr_haworth",
+      "name": "Haworth Crater",
+      "pole": "south",
+      "lat": -86.9,
+      "lon": -4.0,
+      "diameterKm": 51.4,
+      "floorTempK": 33,
+      "iceConcentrationPct": 6.8,
+      "scienceValue": 90,
+      "notes": "Contains some of the coldest measured surface temperatures in the Solar System (~33 K via LRO Diviner)."
+    },
+    {
+      "id": "psr_faustini",
+      "name": "Faustini Crater",
+      "pole": "south",
+      "lat": -87.3,
+      "lon": 77.0,
+      "diameterKm": 42.5,
+      "floorTempK": 37,
+      "iceConcentrationPct": 6.4,
+      "scienceValue": 85,
+      "notes": "Permanently shadowed floor with high ultraviolet Lyman-alpha reflectance ratio detected by LRO LAMP."
+    },
+    {
+      "id": "psr_de_gerlache",
+      "name": "de Gerlache Crater",
+      "pole": "south",
+      "lat": -88.5,
+      "lon": -87.1,
+      "diameterKm": 32.7,
+      "floorTempK": 39,
+      "iceConcentrationPct": 6.1,
+      "scienceValue": 85,
+      "notes": "Adjacent to Shackleton; rim ridge is a primary Artemis exploration target overlooking a vast cold trap."
+    },
+    {
+      "id": "psr_sverdrup",
+      "name": "Sverdrup Crater",
+      "pole": "south",
+      "lat": -88.5,
+      "lon": -152.0,
+      "diameterKm": 32.8,
+      "floorTempK": 41,
+      "iceConcentrationPct": 5.4,
+      "scienceValue": 80,
+      "notes": "South polar cold trap mapped by LRO LOLA laser altimetry and M3 infrared spectroscopy."
+    },
+    {
+      "id": "psr_amundsen",
+      "name": "Amundsen Crater PSR",
+      "pole": "south",
+      "lat": -84.5,
+      "lon": 82.8,
+      "diameterKm": 103.0,
+      "floorTempK": 45,
+      "iceConcentrationPct": 4.9,
+      "scienceValue": 80,
+      "notes": "Large South Pole floor with gentle slopes and extensive stable subsurface ice stability zones."
+    },
+    {
+      "id": "psr_hermite_a",
+      "name": "Hermite Crater (North Pole Cold Trap)",
+      "pole": "north",
+      "lat": 86.0,
+      "lon": -89.9,
+      "diameterKm": 104.0,
+      "floorTempK": 26,
+      "floorTempNote": "Coldest spot recorded by LRO Diviner (26 K / -247 °C)",
+      "iceConcentrationPct": 7.8,
+      "scienceValue": 95,
+      "notes": "Southwestern floor of Hermite recorded 26 K in NASA LRO Diviner thermal maps, cold enough to freeze nitrogen and water."
+    },
+    {
+      "id": "psr_peary",
+      "name": "Peary Crater PSRs",
+      "pole": "north",
+      "lat": 88.6,
+      "lon": 33.0,
+      "diameterKm": 73.0,
+      "floorTempK": 38,
+      "iceConcentrationPct": 6.5,
+      "scienceValue": 90,
+      "notes": "Closest major crater basin to the Lunar North Pole with multiple permanently shadowed interior sub-craters."
+    },
+    {
+      "id": "psr_whipple",
+      "name": "Whipple Crater",
+      "pole": "north",
+      "lat": 89.1,
+      "lon": 119.9,
+      "diameterKm": 14.5,
+      "floorTempK": 36,
+      "iceConcentrationPct": 8.1,
+      "scienceValue": 90,
+      "notes": "High circular polarization ratio (CPR) measured by NASA Mini-RF radar indicating coherent backscatter from thick water-ice deposits."
+    },
+    {
+      "id": "psr_rozhdestvenskiy",
+      "name": "Rozhdestvenskiy W PSR",
+      "pole": "north",
+      "lat": 85.2,
+      "lon": -155.0,
+      "diameterKm": 75.0,
+      "floorTempK": 42,
+      "iceConcentrationPct": 5.2,
+      "scienceValue": 80,
+      "notes": "Northern polar basin cold trap confirmed by LRO neutron and radar volatile surveys."
+    }
+  ]
+}
