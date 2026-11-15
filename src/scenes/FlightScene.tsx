@@ -20,12 +20,14 @@ import {
   R_EARTH,
   SUN_DIR,
   airDensity,
+  astronomicalMoonDirectionAt,
   earthAngle,
   ecefToEci,
   eciToEcef,
   gravity,
   moonPosition,
   pressureRatio,
+  sunDirectionAt,
   type Vec3,
 } from "../core/orbit";
 import { COUNTDOWN_S, FlightSim, MOUNT_HEIGHT, PAD_ECEF, PHASE_LABEL, type PieceId as SimPieceId } from "../core/simulate";
@@ -79,6 +81,9 @@ interface Props {
   keys: React.MutableRefObject<Set<string>>;
   mapView: boolean;
   quality: Quality;
+  launchDate: string;
+  timeOfDay: number;
+  syncCycle: boolean;
   /** Ask the camera to line up so this body is behind the spacecraft. `n` changes on each request. */
   lookAt: { body: "earth" | "moon"; n: number } | null;
   onTelemetry: (t: Telemetry) => void;
@@ -134,7 +139,7 @@ interface Debris {
   gone: boolean;
 }
 
-function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, quality, lookAt, onTelemetry }: Props) {
+function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, quality, launchDate, timeOfDay, syncCycle, lookAt, onTelemetry }: Props) {
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as unknown as OrbitControlsImpl | null;
   const rocketRef = useRef<RocketHandle>(null);
@@ -430,19 +435,47 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       }
     }
 
+    // Solar & Lunar positions from calendar date (YYYY-MM-DD), time of day (hours), and elapsed mission time.
+    // Both are computed in the pad's local horizon frame and rotated into ECI by ecefToEci(..., t) so
+    // the sky always matches the Date and Time controls whether Cycle is on or Locked.
+    const simTimeForSky = syncCycle ? t : 0;
+    const sunDirPad = sunDirectionAt(launchDate, timeOfDay, simTimeForSky);
+    const moonDirPad = astronomicalMoonDirectionAt(launchDate, timeOfDay, simTimeForSky);
+    const sunDirEci = ecefToEci(sunDirPad, t);
+    const moonDirEci = ecefToEci(moonDirPad, t);
+    const sunVecEci = new THREE.Vector3(sunDirEci.x, sunDirEci.y, sunDirEci.z);
+
+    // Compute lunar transit dimming factor for 3D scene lights (rocket & pad)
+    const sepX = sunDirEci.x - moonDirEci.x;
+    const sepY = sunDirEci.y - moonDirEci.y;
+    const sepZ = sunDirEci.z - moonDirEci.z;
+    const sunMoonSep = Math.hypot(sepX, sepY, sepZ);
+    const transitLightFactor =
+      0.03 + 0.97 * THREE.MathUtils.smoothstep(sunMoonSep, 0.0005, 0.0145);
+
     // Lights: the Sun, skylight fading with height, flame light on the pad.
-    const sunWorld = toWorld(new THREE.Vector3(SUN_DIR.x, SUN_DIR.y, SUN_DIR.z));
+    const sunWorld = toWorld(sunVecEci.clone());
     if (sunRef.current) {
       sunRef.current.position.copy(sunWorld).multiplyScalar(400);
       sunRef.current.target.position.set(0, 0, 0);
       sunRef.current.target.updateMatrixWorld();
-      // The Earth's shadow.
+      // The Earth's shadow + smooth twilight transition near horizon + lunar transit dimming.
       const r = new THREE.Vector3(sim.r.x, sim.r.y, sim.r.z);
-      const along = r.dot(new THREE.Vector3(SUN_DIR.x, SUN_DIR.y, SUN_DIR.z));
+      const along = r.dot(sunVecEci);
       const perp = Math.sqrt(Math.max(0, r.lengthSq() - along * along));
-      sunRef.current.intensity = along < 0 && perp < R_EARTH ? 0 : 3.4;
+      const inShadow = along < 0 && perp < R_EARTH;
+      const sunElevAtShip = r.clone().normalize().dot(sunVecEci);
+      const dayFactor = THREE.MathUtils.smoothstep(sunElevAtShip, -0.08, 0.12);
+      sunRef.current.intensity = inShadow ? 0 : 3.4 * Math.max(0.04, dayFactor) * transitLightFactor;
     }
-    if (hemiRef.current) hemiRef.current.intensity = 0.03 + 0.55 * Math.exp(-Math.max(0, sim.altitude) / 15000);
+    if (hemiRef.current) {
+      const rNorm = new THREE.Vector3(sim.r.x, sim.r.y, sim.r.z).normalize();
+      const dayHemi = THREE.MathUtils.smoothstep(rNorm.dot(sunVecEci), -0.15, 0.2);
+      hemiRef.current.intensity =
+        (0.03 + 0.55 * Math.exp(-Math.max(0, sim.altitude) / 15000)) *
+        (0.12 + 0.88 * dayHemi) *
+        (0.18 + 0.82 * transitLightFactor);
+    }
     if (padLightRef.current) {
       const on = sim.burning.stage1 || sim.burning.boosters;
       padLightRef.current.intensity = on ? 3000 * sim.throttle * Math.max(0, 1 - sim.altitude / 800) * (0.85 + 0.3 * Math.random()) : 0;
@@ -457,7 +490,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       camera.position.add(delta);
       controls.target.copy(centre);
       prevTarget.current.copy(centre);
-      controls.maxPolarAngle = flying && sim.altitude > 200 ? Math.PI : Math.PI / 2 - 0.03;
+      const camDistToTarget = Math.max(10, camera.position.distanceTo(centre));
+      const groundCos = Math.max(-0.92, Math.min(0.03, (2.2 - centre.y) / camDistToTarget));
+      controls.maxPolarAngle = flying && sim.altitude > 200 ? Math.PI : Math.acos(groundCos);
 
       // Frame the Moon on the way in and the Earth on the way home, once each.
       if (flying && sim.moonDistance < 80000000 && !autoFramed.current.has("moon")) {
@@ -486,6 +521,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     const camR = Math.hypot(camEci.x, camEci.y, camEci.z);
     const u = skyUniforms;
     u.uWorldToEci.value.setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(qFrame.clone().invert()));
+    u.uSunDir.value.copy(sunVecEci);
     u.uCamAlt.value = camR - R_EARTH;
     u.uCamUp.value.set(camEci.x / camR, camEci.y / camR, camEci.z / camR);
     u.uCamFromPad.value.set(camEci.x - padEci.x, camEci.y - padEci.y, camEci.z - padEci.z);
@@ -493,11 +529,36 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     const north = ecefToEci({ x: 0, y: 0, z: 1 }, t);
     u.uPadEast.value.set(east.x, east.y, east.z);
     u.uPadNorth.value.set(north.x, north.y, north.z);
-    const moon = moonPosition(t);
-    u.uMoonRel.value.set(moon.x - camEci.x, moon.y - camEci.y, moon.z - camEci.z);
+
+    // Near Earth (on the pad or during ascent), position the visual Moon using the J2000 astronomical
+    // lunar ephemeris relative to the camera so historical solar transits and lunar phases align accurately;
+    // in deep space flight, blend smoothly to the trajectory propagator's moonPosition(t).
+    const astroDist = 234000000;
+    const astroMoonRel = {
+      x: moonDirEci.x * astroDist,
+      y: moonDirEci.y * astroDist,
+      z: moonDirEci.z * astroDist,
+    };
+    const orbitMoon = moonPosition(t);
+    const orbitMoonRel = {
+      x: orbitMoon.x - camEci.x,
+      y: orbitMoon.y - camEci.y,
+      z: orbitMoon.z - camEci.z,
+    };
+    const deepSpaceBlend = flying
+      ? THREE.MathUtils.smoothstep(sim.altitude, 250000, 15000000)
+      : 0;
+    u.uMoonRel.value.set(
+      astroMoonRel.x + (orbitMoonRel.x - astroMoonRel.x) * deepSpaceBlend,
+      astroMoonRel.y + (orbitMoonRel.y - astroMoonRel.y) * deepSpaceBlend,
+      astroMoonRel.z + (orbitMoonRel.z - astroMoonRel.z) * deepSpaceBlend,
+    );
     u.uEarthAngle.value = earthAngle(t);
-    u.uTime.value = t;
-    u.uRealTime.value = state.clock.elapsedTime;
+    // Cloud time combines real-time ambient drift (even on the pad), mission time (when syncCycle is on),
+    // and time-of-day scrubbing so moving the slider forward/backward visibly moves the clouds!
+    const cloudTime = (syncCycle ? t : 0) + state.clock.elapsedTime * 1.8 + (timeOfDay - 9.0) * 180.0;
+    u.uTime.value = cloudTime;
+    u.uRealTime.value = state.clock.elapsedTime + (timeOfDay - 9.0) * 12.0;
     skyRef.current?.position.copy(camera.position);
 
     // Predicted path (KSP-style orbit line), refreshed a couple of times a second.

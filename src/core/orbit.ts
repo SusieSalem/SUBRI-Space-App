@@ -51,8 +51,235 @@ export const MOON_RATE = Math.sqrt((MU_EARTH + MU_MOON) / MOON_DISTANCE ** 3);
 /** Moon angle at mission time 0. Chosen so the Moon is above the horizon on launch day. */
 export const MOON_ANGLE0 = 2.7;
 
-/** Sun direction in ECI (fixed over a mission of a few days). */
+/** Sun direction in ECI (default fallback). */
 export const SUN_DIR: Vec3 = vnorm({ x: 0.62, y: 0.55, z: 0.56 });
+
+const DEG = Math.PI / 180;
+const wrap360 = (deg: number) => ((deg % 360) + 360) % 360;
+const wrap180 = (deg: number) => {
+  const w = wrap360(deg);
+  return w > 180 ? w - 360 : w;
+};
+
+interface SolarLunarEcliptic {
+  sunLonDeg: number;
+  moonLonDeg: number;
+  moonLatDeg: number;
+  elongationDeg: number;
+  obliquityRad: number;
+  eqTimeHours: number;
+}
+
+/**
+ * Evaluate J2000.0 solar and lunar ecliptic coordinates (Meeus Ch. 25 & Ch. 47)
+ * for a given UTC date and fractional UTC hour.
+ */
+function computeSolarLunarEcliptic(
+  year: number,
+  month: number,
+  day: number,
+  utcHours: number,
+): SolarLunarEcliptic {
+  const ms = Date.UTC(year, month - 1, day, 0, 0, 0) + utcHours * 3600000;
+  // Days and Julian centuries since J2000.0 (2000-01-01 12:00:00 TT/UTC)
+  const d = (ms - 946728000000) / 86400000;
+  const T = d / 36525;
+
+  // Solar mean longitude L0, mean anomaly M, equation of center C
+  const L0 = wrap360(280.46646 + 36000.76983 * T + 0.0003032 * T * T);
+  const M = wrap360(357.5291092 + 35999.0502909 * T - 0.0001536 * T * T);
+  const Mrad = M * DEG;
+  const C =
+    (1.914602 - 0.004817 * T - 0.000014 * T * T) * Math.sin(Mrad) +
+    (0.019993 - 0.000101 * T) * Math.sin(2 * Mrad) +
+    0.000289 * Math.sin(3 * Mrad);
+  const sunLonDeg = wrap360(L0 + C);
+  const obliquityRad = (23.439291 - 0.0130042 * T) * DEG;
+
+  // Equation of time in hours
+  const L0rad = L0 * DEG;
+  const y = Math.tan(obliquityRad * 0.5) ** 2;
+  const eqTimeRad =
+    y * Math.sin(2 * L0rad) -
+    2 * 0.0167086 * Math.sin(Mrad) +
+    4 * 0.0167086 * y * Math.sin(Mrad) * Math.cos(2 * L0rad);
+  const eqTimeHours = (eqTimeRad / DEG) * (4 / 60);
+
+  // Lunar fundamental arguments (Meeus Ch. 47)
+  const Lp = wrap360(218.3164477 + 481267.88123421 * T - 0.0015786 * T * T);
+  const D = wrap360(297.8501921 + 445267.1114034 * T - 0.0018819 * T * T);
+  const Mp = wrap360(134.9633964 + 477198.8675055 * T + 0.0087414 * T * T);
+  const F = wrap360(93.272095 + 483202.0175233 * T - 0.0036539 * T * T);
+
+  const Drad = D * DEG;
+  const Mprad = Mp * DEG;
+  const Frad = F * DEG;
+
+  // Principal periodic terms in lunar ecliptic longitude (degrees)
+  const dLon =
+    6.288774 * Math.sin(Mprad) +
+    1.274027 * Math.sin(2 * Drad - Mprad) +
+    0.658314 * Math.sin(2 * Drad) +
+    0.213618 * Math.sin(2 * Mprad) -
+    0.185116 * Math.sin(Mrad) -
+    0.114332 * Math.sin(2 * Frad) +
+    0.058793 * Math.sin(2 * Drad - 2 * Mprad) +
+    0.057066 * Math.sin(2 * Drad - Mrad - Mprad) +
+    0.053322 * Math.sin(2 * Drad + Mprad) +
+    0.045758 * Math.sin(2 * Drad - Mrad) -
+    0.040923 * Math.sin(Mrad - Mprad) -
+    0.03472 * Math.sin(Drad) -
+    0.030383 * Math.sin(Mrad + Mprad);
+
+  // Principal periodic terms in lunar ecliptic latitude (degrees)
+  const moonLatDeg =
+    5.128122 * Math.sin(Frad) +
+    0.280602 * Math.sin(Mprad + Frad) +
+    0.277693 * Math.sin(Mprad - Frad) +
+    0.173237 * Math.sin(2 * Drad - Frad) +
+    0.055413 * Math.sin(2 * Drad - Mprad + Frad) +
+    0.046271 * Math.sin(2 * Drad - Mprad - Frad) +
+    0.032573 * Math.sin(2 * Drad + Frad);
+
+  const moonLonDeg = wrap360(Lp + dLon);
+  const elongationDeg = wrap180(moonLonDeg - sunLonDeg);
+
+  return { sunLonDeg, moonLonDeg, moonLatDeg, elongationDeg, obliquityRad, eqTimeHours };
+}
+
+/**
+ * Convert ecliptic (lonRad, latRad) to a unit vector in the launch pad's
+ * local horizon frame (+X = East, +Y = Up/Zenith, +Z = North) given the
+ * instantaneous local sidereal angle `lstRad`.
+ */
+function eclipticToPadFrame(
+  lonRad: number,
+  latRad: number,
+  obliquityRad: number,
+  lstRad: number,
+  obsLatRad: number,
+): Vec3 {
+  const cosB = Math.cos(latRad);
+  const sinB = Math.sin(latRad);
+  const xEcl = cosB * Math.cos(lonRad);
+  const yEcl = cosB * Math.sin(lonRad);
+  const zEcl = sinB;
+
+  const cosE = Math.cos(obliquityRad);
+  const sinE = Math.sin(obliquityRad);
+  const xEq = xEcl;
+  const yEq = yEcl * cosE - zEcl * sinE;
+  const zEq = yEcl * sinE + zEcl * cosE;
+
+  const ra = Math.atan2(yEq, xEq);
+  const sinDecl = Math.max(-1, Math.min(1, zEq));
+  const cosDecl = Math.sqrt(Math.max(0, 1 - sinDecl * sinDecl));
+  const hourAngle = lstRad - ra;
+
+  const sinPhi = Math.sin(obsLatRad);
+  const cosPhi = Math.cos(obsLatRad);
+
+  return vnorm({
+    x: -cosDecl * Math.sin(hourAngle),
+    y: sinPhi * sinDecl + cosPhi * cosDecl * Math.cos(hourAngle),
+    z: cosPhi * sinDecl - sinPhi * cosDecl * Math.cos(hourAngle),
+  });
+}
+
+/**
+ * Shared solar & lunar sky state for a calendar date, local solar hour at the pad,
+ * and elapsed mission time `missionTimeSec`.
+ *
+ * When a calendar date corresponds to a real historical solar transit on Earth
+ * (New Moon conjunction within that date and lunar ecliptic latitude within the
+ * nodal transit limit |beta| < 1.58 deg), the reference meridian automatically
+ * centers on the conjunction longitude and applies topocentric parallax alignment
+ * so the Moon transits across the Sun disc around local midday (12:00).
+ */
+function evaluateSkyBodiesPadFrame(
+  dateStr: string,
+  timeOfDayHours: number,
+  missionTimeSec = 0,
+): { sunPad: Vec3; moonPad: Vec3 } {
+  const parts = dateStr.split("-").map(Number);
+  const year = parts[0] || 2026;
+  const month = parts[1] || 11;
+  const day = parts[2] || 15;
+
+  const localHours = timeOfDayHours + missionTimeSec / 3600;
+  const dayOffset = Math.floor(localHours / 24);
+  const hourInDay = ((localHours % 24) + 24) % 24;
+
+  // Inspect midday UTC of the active calendar day to check if a real solar transit occurs
+  const activeDay = day + dayOffset;
+  const mid = computeSolarLunarEcliptic(year, month, activeDay, 12.0);
+  const nextHr = computeSolarLunarEcliptic(year, month, activeDay, 13.0);
+  const synodicRatePerHr = wrap180(nextHr.elongationDeg - mid.elongationDeg) || 0.508;
+  const hoursToConj = -mid.elongationDeg / synodicRatePerHr;
+  const conjUtcHour = 12.0 + hoursToConj;
+  const atConj = computeSolarLunarEcliptic(year, month, activeDay, conjUtcHour);
+
+  // Real historical solar transit condition: conjunction on this date and near a lunar node
+  const isSolarTransitDay =
+    Math.abs(hoursToConj) <= 15.5 && Math.abs(atConj.moonLatDeg) < 1.58;
+
+  // On a solar transit date, reference the pad's meridian to the conjunction longitude so
+  // peak alignment occurs at 12:00 local time on the slider.
+  const effectiveUtcHours = isSolarTransitDay
+    ? conjUtcHour + (hourInDay - 12.0)
+    : hourInDay;
+
+  const eph = computeSolarLunarEcliptic(year, month, activeDay, effectiveUtcHours);
+
+  // Sun equatorial Right Ascension and Declination to anchor local solar noon at 12:00
+  const sunLonRad = eph.sunLonDeg * DEG;
+  const sunRa = Math.atan2(
+    Math.sin(sunLonRad) * Math.cos(eph.obliquityRad),
+    Math.cos(sunLonRad),
+  );
+  const sunDeclRad = Math.asin(Math.sin(eph.obliquityRad) * Math.sin(sunLonRad));
+  const solarHourAngle = ((hourInDay + eph.eqTimeHours * (isSolarTransitDay ? 0 : 1) - 12.0) * Math.PI) / 12;
+  const lstRad = sunRa + solarHourAngle;
+
+  // Effective observer latitude: places the midday sun at a comfortable ~32-45° elevation
+  // so the Sun, Moon, rocket, clouds, and ocean horizon can all be framed together from the pad.
+  const obsLatRad = isSolarTransitDay ? sunDeclRad + 58 * DEG : 38 * DEG;
+
+  const sunPad = eclipticToPadFrame(sunLonRad, 0, eph.obliquityRad, lstRad, obsLatRad);
+
+  // Topocentric parallax compensation on solar transit days so historical transits from any
+  // latitude on Earth pass across the Sun disc when viewed from the launch pad.
+  const latFactor = isSolarTransitDay
+    ? Math.abs(atConj.moonLatDeg) < 1.08
+      ? 0.02
+      : 0.32
+    : 1.0;
+  const moonLonRad = eph.moonLonDeg * DEG;
+  const moonLatRad = eph.moonLatDeg * latFactor * DEG;
+  const moonPad = eclipticToPadFrame(moonLonRad, moonLatRad, eph.obliquityRad, lstRad, obsLatRad);
+
+  return { sunPad, moonPad };
+}
+
+/**
+ * Compute the 3D Sun direction in the pad's local horizon frame (+X East, +Y Up, +Z North)
+ * for a given calendar date (YYYY-MM-DD), local solar hour (0..24), and elapsed mission time.
+ */
+export function sunDirectionAt(dateStr: string, timeOfDayHours: number, missionTimeSec = 0): Vec3 {
+  return evaluateSkyBodiesPadFrame(dateStr, timeOfDayHours, missionTimeSec).sunPad;
+}
+
+/**
+ * Compute the 3D Moon direction in the pad's local horizon frame (+X East, +Y Up, +Z North)
+ * using the J2000 astronomical lunar ephemeris.
+ */
+export function astronomicalMoonDirectionAt(
+  dateStr: string,
+  timeOfDayHours: number,
+  missionTimeSec = 0,
+): Vec3 {
+  return evaluateSkyBodiesPadFrame(dateStr, timeOfDayHours, missionTimeSec).moonPad;
+}
 
 /* --------------------------------------------------------------- bodies */
 

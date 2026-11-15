@@ -695,24 +695,25 @@ void main() {
   float mu = dot(d, up);
   float nu = dot(d, L);
 
-  // Dynamic Moon-Sun transit dimming
+  // Dynamic Moon-Sun transit dimming (using chord length for full 32-bit float precision)
   float moonDist = max(length(uMoonRel), 1.0);
   vec3 moonDir = uMoonRel / moonDist;
   float moonAng = RM / moonDist;
-  float sunAng = 0.00465;
-  float sunMoonSep = acos(clamp(dot(L, moonDir), -1.0, 1.0));
-  float transitFactor = mix(0.08, 1.0, smoothstep(abs(moonAng - sunAng) * 0.7, (moonAng + sunAng) * 1.15, sunMoonSep));
+  float sunAng = 0.00705;
+  float sunMoonSep = length(L - moonDir);
+  float transitProgress = smoothstep(abs(moonAng - sunAng) * 0.75, moonAng + sunAng, sunMoonSep);
+  float transitFactor = mix(0.025, 1.0, pow(transitProgress, 1.35));
 
   vec2 atmo = raySphereH(h0, mu, HA);
   vec2 ground = raySphereH(h0, mu, 0.0);
   bool hitGround = ground.x < ground.y && ground.x > 0.0;
 
-  // Moon intersection.
+  // Numerically stable Moon ray-sphere intersection (avoids float32 cancellation at lunar distance)
   float bM = dot(d, uMoonRel);
-  float cM = dot(uMoonRel, uMoonRel) - RM * RM;
-  float discM = bM * bM - cM;
+  vec3 perpM = uMoonRel - d * bM;
+  float discM = RM * RM - dot(perpM, perpM);
   float tMoon = -1.0;
-  if (discM > 0.0) {
+  if (bM > 0.0 && discM > 0.0) {
     float t = bM - sqrt(discM);
     if (t > 0.0) tMoon = t;
   }
@@ -820,12 +821,35 @@ void main() {
     float ndl = max(dot(n, L), 0.0);
     float ndv = max(dot(n, -d), 0.0);
     float ls = ndl / (ndl + ndv + 1e-4) * 2.0;
-    col = albedo * uSunIntensity * mix(ndl, ls, 0.6) / PI * viewT + inscatter;
+    // Faint earthshine on the lunar night side during a solar transit
+    vec3 earthshine = albedo * vec3(0.0014, 0.0019, 0.0028) * uSunIntensity * viewT * (1.0 - transitProgress);
+    col = albedo * uSunIntensity * mix(ndl, ls, 0.6) / PI * viewT + earthshine + inscatter;
   } else {
     col = inscatter;
-    float sunDisc = smoothstep(0.99997, 0.99999, nu);
+    float sunRayAng = length(d - L);
+    float sunDisc = 1.0 - smoothstep(sunAng * 0.93, sunAng * 1.04, sunRayAng);
     col += sunDisc * uSunIntensity * 40.0 * viewT;
     col += uSunIntensity * transitFactor * viewT * vec3(1.0, 0.85, 0.65) * pow(max(nu, 0.0), 900.0) * 0.6;
+
+    // Solar corona and chromospheric rim around the lunar silhouette during totality / deep transit
+    float overlap = 1.0 - transitProgress;
+    if (overlap > 0.01) {
+      float moonRayAng = length(d - moonDir);
+      float rRatio = max(moonRayAng / max(moonAng, 1e-4), 1.0);
+      vec3 moonRight = normalize(cross(up, moonDir) + vec3(1e-5));
+      vec3 moonUp = cross(moonDir, moonRight);
+      float posAngle = atan(dot(d - moonDir, moonUp), dot(d - moonDir, moonRight));
+      float streamers = 0.78 + 0.22 * sin(posAngle * 4.0 + 0.7) * cos(posAngle * 3.0 - 0.4) + 0.12 * sin(posAngle * 9.0);
+      float innerCorona = exp(-(rRatio - 1.0) * 5.2);
+      float outerCorona = exp(-(rRatio - 1.0) * 1.55) * streamers;
+      float chromosphere = exp(-(rRatio - 1.0) * 26.0);
+      float totality = 1.0 - smoothstep(0.0, (moonAng - sunAng) * 2.4 + 0.0009, sunMoonSep);
+      vec3 coronaCol =
+        vec3(1.0, 0.98, 0.94) * (innerCorona * 2.4 + outerCorona * 0.85) +
+        vec3(1.0, 0.36, 0.46) * chromosphere * 1.6;
+      col += coronaCol * uSunIntensity * viewT * (totality * 0.95 + pow(overlap, 3.0) * 0.18);
+    }
+
     float skyLum = dot(inscatter, vec3(0.2126, 0.7152, 0.0722));
     col += stars(d) * exp(-skyLum * 40.0) * 1.5;
   }
