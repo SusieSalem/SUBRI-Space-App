@@ -5,6 +5,7 @@
 import { useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import ShaderMat from "./ShaderMat";
 import type { PartId } from "../core/design";
 import { billboardVertex, plumeFragment } from "./shaders/space";
 
@@ -12,6 +13,10 @@ interface Props {
   parts: PartId[];
   burning: boolean;
   heat: number;
+  /** Size multiplier. Default shrinks metres to space-scene units. */
+  scale?: number;
+  /** Solar wings folded along the body, as they are under the fairing at launch. */
+  folded?: boolean;
 }
 
 // The model is built in metres and scaled down. Nose points along +Z.
@@ -24,7 +29,7 @@ const panel = new THREE.MeshStandardMaterial({ color: "#14244a", metalness: 0.6,
 const shield = new THREE.MeshStandardMaterial({ color: "#7a6a52", metalness: 0.4, roughness: 0.6 });
 const windowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.1, 0.6) });
 
-export default function Spacecraft({ parts, burning, heat }: Props) {
+export default function Spacecraft({ parts, burning, heat, scale = SPACECRAFT_SCALE, folded = false }: Props) {
   const hasCapsule = parts.includes("capsule");
   const service = parts.includes("serviceLarge") ? "large" : parts.includes("serviceSmall") ? "small" : null;
   const hasSolar = parts.includes("solarPanels");
@@ -63,7 +68,7 @@ export default function Spacecraft({ parts, burning, heat }: Props) {
   const engineZ = -serviceLength - 0.3;
 
   return (
-    <group scale={SPACECRAFT_SCALE}>
+    <group scale={scale}>
       {hasCapsule && (
         <group>
           <mesh geometry={capsuleGeo} material={silver} />
@@ -100,7 +105,7 @@ export default function Spacecraft({ parts, burning, heat }: Props) {
           {/* plume, apex at the nozzle and widening behind */}
           <mesh ref={plumeRef} position={[0, 0, engineZ - 1.4 - 4]} rotation={[Math.PI / 2, 0, 0]}>
             <coneGeometry args={[2.2, 8, 24, 1, true]} />
-            <shaderMaterial
+            <ShaderMat
               vertexShader={billboardVertex}
               fragmentShader={plumeFragment}
               uniforms={plumeUniforms}
@@ -113,9 +118,15 @@ export default function Spacecraft({ parts, burning, heat }: Props) {
           {hasSolar &&
             [0, 1, 2, 3].map((i) => (
               <group key={i} position={[0, 0, serviceZ]} rotation={[0, 0, Math.PI / 4 + (i * Math.PI) / 2]}>
-                <mesh position={[2.3 + 3.6, 0, 0]} material={panel}>
-                  <boxGeometry args={[7, 0.06, 1.9]} />
-                </mesh>
+                {folded ? (
+                  <mesh position={[2.42, 0, -serviceLength / 2 + 0.3]} rotation={[0, Math.PI / 2, 0]} material={panel}>
+                    <boxGeometry args={[serviceLength * 0.9, 0.06, 1.2]} />
+                  </mesh>
+                ) : (
+                  <mesh position={[2.3 + 3.6, 0, 0]} material={panel}>
+                    <boxGeometry args={[7, 0.06, 1.9]} />
+                  </mesh>
+                )}
                 <mesh position={[2.35, 0, 0]} material={silver}>
                   <boxGeometry args={[0.3, 0.12, 0.3]} />
                 </mesh>
@@ -128,7 +139,7 @@ export default function Spacecraft({ parts, burning, heat }: Props) {
       {heat > 0.01 && (
         <mesh position={[0, 0, -0.6]} scale={[1, 1, 1.6]}>
           <sphereGeometry args={[3.4, 32, 16]} />
-          <shaderMaterial
+          <ShaderMat
             uniforms={heatUniforms}
             vertexShader={heatVertex}
             fragmentShader={heatFragment}

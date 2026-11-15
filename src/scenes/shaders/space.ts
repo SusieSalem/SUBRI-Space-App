@@ -138,12 +138,14 @@ varying vec2 vUv;
 ${noiseGLSL}
 void main() {
   // vUv.y runs from the nozzle (1) to the tail (0) on a cone.
-  float along = vUv.y;
+  // Clamp: rounding can push vUv.y slightly below 0, and pow() of a negative is NaN,
+  // which bloom would then smear across the whole screen.
+  float along = clamp(vUv.y, 0.0, 1.0);
   float flicker = 0.75 + 0.25 * valueNoise(vec3(vUv * vec2(6.0, 10.0), uTime * 25.0));
   float core = pow(along, 2.5);
   vec3 col = mix(vec3(1.0, 0.45, 0.15), vec3(0.7, 0.85, 1.0), core) * (core * 6.0 + along * 1.5) * flicker;
-  float a = along * uThrottle;
-  gl_FragColor = vec4(col * a, a);
+  float a = along * clamp(uThrottle, 0.0, 1.0);
+  gl_FragColor = vec4(max(col * a, 0.0), a);
   ${fragmentDepth}
 }
 `;

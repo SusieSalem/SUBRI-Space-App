@@ -19,7 +19,7 @@ interface Props {
 
 const MARGIN = 0.08;
 
-export default function TrajectoryMap({ clock, phaseLabel }: Props) {
+export default function TrajectoryMap({ clock }: Props) {
   // The planned path is static — compute geometry once.
   const geometry = useMemo(() => {
     const raw = plannedPathPoints();
@@ -190,7 +190,6 @@ export default function TrajectoryMap({ clock, phaseLabel }: Props) {
           />
         </circle>
       </svg>
-      <span className="phase-mini">Phase: {phaseLabel}</span>
     </aside>
   );
 }
