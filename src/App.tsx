@@ -10,6 +10,17 @@ import {
 import { ROCKETS, ROCKETS_BY_ID, launchCheck, type RocketId } from "./core/launchCheck";
 import { COUNTDOWN_S, FlightSim } from "./core/simulate";
 import { ARTEMIS2, artemisAltitudeAt } from "./core/artemis2";
+import {
+  DEFAULT_STORM_ID,
+  STORMS,
+  STORMS_BY_ID,
+  STORM_ONSET_S,
+  radiationScale,
+  stormLabel,
+  stormOutcome,
+  type StormResult,
+} from "./core/spaceWeather";
+import { playAlert } from "./audio/soundManager";
 import FlightScene, { type Quality, type Telemetry, type WarpControl } from "./scenes/FlightScene";
 
 /** Step 1 is assembly on the pad; step 2 is the flight, in the same world. */
@@ -92,6 +103,9 @@ export default function App() {
   const [tel, setTel] = useState<Telemetry | null>(null);
   const [warpSetting, setWarpSetting] = useState<number | "auto">("auto");
   const [paused, setPaused] = useState(false);
+  /** A real DONKI storm replayed during the flight, or "none" for a quiet Sun. */
+  const [stormId, setStormId] = useState<string>(DEFAULT_STORM_ID);
+  const [stormResult, setStormResult] = useState<StormResult | null>(null);
   const simRef = useRef<FlightSim>(new FlightSim(rocket, parts));
   const warp = useRef<WarpControl>({ setting: "auto", paused: false });
   const keys = useRef(new Set<string>());
@@ -106,6 +120,8 @@ export default function App() {
   const overBudget = totalCost > MISSION_REQUIREMENTS.budgetMUsd;
   const blockers = issues.filter((i) => i.severity === "blocker");
   const canLaunch = blockers.length === 0 && check.fits && !overBudget;
+  const storm = STORMS_BY_ID[stormId] ?? null;
+  const stormIsDangerous = !!storm && radiationScale(storm.protonFluxPfu) >= 2;
 
   // A fresh vehicle on the pad whenever the design changes during assembly.
   useEffect(() => {
@@ -126,13 +142,23 @@ export default function App() {
     setPaused(false);
     setMapView(false);
     setTel(null);
+    setStormResult(null);
     setMode("flight");
   };
   const backToAssembly = () => {
     setMode("assembly");
     setMapView(false);
     setTel(null);
+    setStormResult(null);
   };
+
+  // The storm reaches the spacecraft STORM_ONSET_S after liftoff, if the flight is still going.
+  useEffect(() => {
+    if (mode !== "flight" || !tel || !storm || stormResult) return;
+    if (tel.failed || tel.done || tel.t - COUNTDOWN_S < STORM_ONSET_S) return;
+    setStormResult(stormOutcome(storm, parts, tel.altitude));
+    playAlert("solar_storm");
+  }, [mode, tel, storm, stormResult, parts]);
 
   const stepWarp = useCallback(
     (dir: 1 | -1) => {
@@ -277,6 +303,33 @@ export default function App() {
                 );
               })}
             </div>
+            <h3>Space weather</h3>
+            <label className="storm-pick">
+              <span className="part-desc">A real solar storm from NASA's DONKI database hits on day 2 of the flight.</span>
+              <select value={stormId} onChange={(e) => setStormId(e.target.value)}>
+                {STORMS.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {stormLabel(s)}
+                  </option>
+                ))}
+                <option value="none">Quiet Sun (no storm)</option>
+              </select>
+              {storm && (
+                <span className="small">
+                  <span className={stormIsDangerous && !parts.includes("radiationShield") ? "bad" : "muted"}>
+                    {storm.title}.{" "}
+                    {stormIsDangerous
+                      ? parts.includes("radiationShield")
+                        ? "Dangerous proton flux; the storm shelter will protect the crew."
+                        : "Dangerous proton flux and no storm shelter on board."
+                      : "Little or no proton radiation."}
+                  </span>{" "}
+                  <a href={storm.sourceUrl} target="_blank" rel="noreferrer">
+                    DONKI record
+                  </a>
+                </span>
+              )}
+            </label>
           </aside>
 
           <aside className="panel right assembly">
@@ -374,6 +427,25 @@ export default function App() {
               <Bar label={`Fuel / ${tel.fuelName}`} fill={tel.fuel} />
               <Bar label="Throttle" fill={tel.throttle} />
             </div>
+            {storm && !stormResult && !tel.done && !tel.failed && (
+              <span className="small muted">
+                Space weather: a real storm ({storm.startTimeUtc.slice(0, 10)}) arrives at T+2d.
+              </span>
+            )}
+            {stormResult && (
+              <div className={`storm-alert ${stormResult.severity}`}>
+                <span className="storm-head">{stormResult.headline}</span>
+                <span className="small">{stormResult.explanation}</span>
+                <a className="small" href={stormResult.storm.sourceUrl} target="_blank" rel="noreferrer">
+                  Open the DONKI record
+                </a>
+                {tel.done && stormResult.outcome === "exposed" && (
+                  <span className="small bad">
+                    The capsule is home, but the crew's radiation dose makes this a failed mission.
+                  </span>
+                )}
+              </div>
+            )}
             <ArtemisComparison tel={tel} />
             <span className={`small ${tel.autopilot ? "ok" : "warn"}`}>
               {tel.autopilot ? "Autopilot flying (press T or WASD to take over)" : "Manual control (press T for autopilot)"}
