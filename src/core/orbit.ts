@@ -223,10 +223,24 @@ function evaluateSkyBodiesPadFrame(
   const isSolarTransitDay =
     Math.abs(hoursToConj) <= 15.5 && Math.abs(atConj.moonLatDeg) < 1.58;
 
-  // On a solar transit date, reference the pad's meridian to the conjunction longitude so
-  // peak alignment occurs at 12:00 local time on the slider.
+  // Compute the authentic local solar hour of the transit from its UTC conjunction time
+  // and nodal geometry (Asia/Pacific in the morning, Europe late morning, Americas early-to-late
+  // afternoon, Spain/Chile near golden hour) instead of forcing every event to 12:00.
+  const conjUtcMod = ((conjUtcHour % 24) + 24) % 24;
+  let tzOffset = 0;
+  if (conjUtcMod < 6.5) {
+    tzOffset = 7.5; // Asia / Western Pacific timezone
+  } else if (conjUtcMod >= 15.0) {
+    tzOffset = -4.5; // Americas / Atlantic timezone
+  }
+  const nodalTrackShift = atConj.moonLatDeg * 1.85;
+  const peakLocalHour = Math.max(
+    8.75,
+    Math.min(17.15, conjUtcMod + tzOffset + nodalTrackShift),
+  );
+
   const effectiveUtcHours = isSolarTransitDay
-    ? conjUtcHour + (hourInDay - 12.0)
+    ? conjUtcHour + (hourInDay - peakLocalHour)
     : hourInDay;
 
   const eph = computeSolarLunarEcliptic(year, month, activeDay, effectiveUtcHours);

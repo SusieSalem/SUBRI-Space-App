@@ -165,8 +165,20 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   const dims = stackDims(rocket, parts);
   const armSwing = useArmSwing(simRef, flying);
 
-  const skyUniforms = useMemo(
-    () => ({
+  const skyUniforms = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    const loadGlobeTex = (url: string) => {
+      const tex = loader.load(url);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      // Mipmaps so the globe doesn't shimmer from orbit; anisotropy keeps it sharp at grazing angles.
+      tex.minFilter = THREE.LinearMipmapLinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = true;
+      tex.anisotropy = 8;
+      return tex;
+    };
+    return {
       uWorldToEci: { value: new THREE.Matrix3() },
       uSunDir: { value: new THREE.Vector3(SUN_DIR.x, SUN_DIR.y, SUN_DIR.z) },
       uCamUp: { value: new THREE.Vector3(0, 1, 0) },
@@ -179,9 +191,11 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       uTime: { value: 0 },
       uRealTime: { value: 0 },
       uSunIntensity: { value: SUN_INTENSITY },
-    }),
-    [],
-  );
+      uEarthDay: { value: loadGlobeTex("/textures/earth_day.jpg") },
+      uEarthNight: { value: loadGlobeTex("/textures/earth_night.png") },
+      uEarthSpec: { value: loadGlobeTex("/textures/earth_specular.jpg") },
+    };
+  }, []);
   const skyDefines = useMemo(
     () =>
       quality === "high"

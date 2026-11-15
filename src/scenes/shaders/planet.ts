@@ -44,6 +44,9 @@ uniform float uEarthAngle;  // Earth rotation angle, radians
 uniform float uTime;      // mission time (clouds drift with time warp)
 uniform float uRealTime;  // wall-clock time (waves keep moving on the pad)
 uniform float uSunIntensity;
+uniform sampler2D uEarthDay;   // NASA Blue Marble 2K equirectangular daylight texture
+uniform sampler2D uEarthNight; // NASA Black Marble 2K equirectangular nighttime city lights
+uniform sampler2D uEarthSpec;  // NASA Earth 2K land/water specular mask
 varying vec3 vDir;
 
 #ifndef VIEW_STEPS
@@ -168,35 +171,51 @@ vec3 toEcef(vec3 p) {
   return vec3(c * p.x - s * p.y, s * p.x + c * p.y, p.z);
 }
 
-// Large-scale continents on the Earth-fixed sphere. The launch site (ECEF +Y)
-// is kept on a coast with land to the west.
-float landMask(vec3 n, out float height) {
-  vec3 warp = vec3(fbm(n * 1.3 + 4.0, 4), fbm(n * 1.3 + 9.0, 4), fbm(n * 1.3 + 2.0, 4));
-  height = fbm(n * 1.8 + warp * 1.2, 6);
-  float land = smoothstep(0.515, 0.53, height);
-  float nearPad = 1.0 - smoothstep(0.02, 0.09, length(n - vec3(-0.035, 1.0, 0.0)));
-  return max(land, nearPad);
+// Convert ECEF unit vector n to geographic (lonDeg, latDeg) and equirectangular UV
+// anchored so the launch pad at n = (0, 1, 0) sits on the Cape Canaveral / Florida
+// Atlantic coast (-80.6° W, +28.5° N).
+vec2 ecefToLonLatDeg(vec3 n) {
+  const float cLat0 = 0.878817; // cos(28.5 deg)
+  const float sLat0 = 0.477159; // sin(28.5 deg)
+  // Geographic north at the pad is -Z in the physics frame (the Earth spins about -Z).
+  vec3 nGeo = vec3(n.x, n.y * cLat0 + n.z * sLat0, n.y * sLat0 - n.z * cLat0);
+  float latDeg = degrees(asin(clamp(nGeo.z, -1.0, 1.0)));
+  float lonDeg = degrees(atan(nGeo.x, nGeo.y)) - 80.6;
+  if (lonDeg < -180.0) lonDeg += 360.0;
+  if (lonDeg > 180.0) lonDeg -= 360.0;
+  return vec2(lonDeg, latDeg);
 }
 
+// Mipmapped lookup without a seam at the date line: the u gradient is unwrapped by hand.
+vec3 sampleEarth(sampler2D tex, vec2 uv) {
+  vec2 dx = dFdx(uv);
+  vec2 dy = dFdy(uv);
+  if (abs(dx.x) > 0.5) dx.x -= sign(dx.x);
+  if (abs(dy.x) > 0.5) dy.x -= sign(dy.x);
+  return textureGrad(tex, uv, dx, dy).rgb;
+}
+
+vec2 ecefToEarthUV(vec3 n) {
+  vec2 ll = ecefToLonLatDeg(n);
+  return vec2(fract((ll.x + 180.0) / 360.0), clamp((ll.y + 90.0) / 180.0, 0.001, 0.999));
+}
+
+// Global Earth albedo & land/water mask from NASA Blue Marble (uEarthDay) and
+// NASA Earth specular land/water mask (uEarthSpec).
 vec3 globalAlbedo(vec3 n, out float water, out float height) {
-  float land = landMask(n, height);
+  vec2 uv = ecefToEarthUV(n);
+  vec3 dayTex = pow(sampleEarth(uEarthDay, uv), vec3(2.2));
+  // In uEarthSpec, 1.0 = ocean/water and 0.0 = land/continents
+  float specWater = sampleEarth(uEarthSpec, uv).r;
+  float land = 1.0 - smoothstep(0.18, 0.55, specWater);
   water = 1.0 - land;
-  float lat = abs(n.z);
-  float detail = fbm(n * 14.0, 4);
-  vec3 deep = vec3(0.004, 0.02, 0.06);
-  vec3 shelf = vec3(0.01, 0.07, 0.13);
-  vec3 ocean = mix(deep, shelf, smoothstep(0.42, 0.515, height));
-  vec3 forest = vec3(0.04, 0.09, 0.03);
-  vec3 grass = vec3(0.10, 0.13, 0.05);
-  vec3 desert = vec3(0.36, 0.28, 0.17);
-  float dryBelt = smoothstep(0.12, 0.25, lat) * (1.0 - smoothstep(0.38, 0.5, lat));
-  float dry = smoothstep(0.45, 0.6, fbm(n * 3.0 + 7.0, 4)) * (0.4 + dryBelt);
-  vec3 landCol = mix(mix(forest, grass, detail), desert, clamp(dry, 0.0, 1.0));
-  landCol *= 0.75 + 0.5 * detail;
-  float ice = smoothstep(0.80, 0.86, lat + 0.06 * (detail - 0.5));
-  vec3 col = mix(ocean, landCol, land);
-  water *= 1.0 - ice;
-  return mix(col, vec3(0.75, 0.8, 0.85), ice);
+  height = mix(0.45, 0.65, land);
+
+  // Add subtle high-frequency terrain micro-detail for low-orbit ascent views
+  float detail = fbm(n * 24.0, 3);
+  vec3 landCol = dayTex * (0.95 + 0.1 * detail);
+  vec3 oceanCol = dayTex;
+  return mix(oceanCol, landCol, land);
 }
 
 // Fine detail near the pad: scrub, beach and the ocean to the east.
@@ -482,7 +501,8 @@ vec3 sampleWaterSkyReflection(vec3 reflectDir, vec3 sunVec, float transitFactor)
     vec3 stepOD = BETA_R * airmass.x + BETA_M * 1.1 * airmass.y + BETA_O * airmass.z;
     vec3 stepT = exp(-stepOD);
     vec3 stepVis = trans * clamp((1.0 - stepT) / max(stepOD, vec3(1e-6)), 0.0, 1.0);
-    vec3 sunTrans = extinction(sunDepth(h, max(sunVec.y, 0.02)));
+    // Real sun elevation: below the horizon sunDepth reports shadow and the sky goes dark.
+    vec3 sunTrans = extinction(sunDepth(h, sunVec.y));
     sumR += stepVis * sunTrans * airmass.x;
     sumM += stepVis * sunTrans * airmass.y;
     trans *= stepT;
@@ -491,10 +511,12 @@ vec3 sampleWaterSkyReflection(vec3 reflectDir, vec3 sunVec, float transitFactor)
   float phaseR = 3.0 / (16.0 * PI) * (1.0 + nu * nu);
   float g2 = G * G;
   float phaseM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + nu * nu)) / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * G * nu, 1.5));
-  return (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM) * uSunIntensity * transitFactor;
+  // A faint navy floor so a night sea isn't pure black.
+  vec3 nightFloor = uSunIntensity * vec3(0.0005, 0.0009, 0.0018);
+  return (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM) * uSunIntensity * transitFactor + nightFloor;
 }
 
-vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec2 local, float coastDist, float nearW, float h0, float transitFactor) {
+vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec2 local, float coastDist, float nearW, float h0, float transitFactor, vec3 photoSea) {
   vec3 east = uPadEast - n * dot(n, uPadEast);
   float eastLen = length(east);
   east = eastLen > 1e-3 ? east / eastLen : normalize(cross(vec3(0.0, 0.0, 1.0), n));
@@ -621,7 +643,7 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
       vec3 stepODR = BETA_R * densR.x + BETA_M * 1.1 * densR.y + BETA_O * densR.z;
       vec3 stepTR = exp(-stepODR);
       vec3 stepVisR = transR * clamp((1.0 - stepTR) / max(stepODR, vec3(1e-6)), 0.0, 1.0);
-      vec3 sunTransR = extinction(sunDepth(hR, max(sunVec.y, 0.02)));
+      vec3 sunTransR = extinction(sunDepth(hR, sunVec.y));
       sumR += stepVisR * sunTransR * densR.x;
       sumM += stepVisR * sunTransR * densR.y;
       transR *= stepTR;
@@ -630,7 +652,8 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
     float phaseRR = 3.0 / (16.0 * PI) * (1.0 + nuR * nuR);
     float g2R = G * G;
     float phaseMR = 3.0 / (8.0 * PI) * ((1.0 - g2R) * (1.0 + nuR * nuR)) / ((2.0 + g2R) * pow(1.0 + g2R - 2.0 * G * nuR, 1.5));
-    vec3 skyReflection = (sumR * BETA_R * phaseRR + sumM * BETA_M * phaseMR) * uSunIntensity * transitFactor;
+    vec3 skyReflection = (sumR * BETA_R * phaseRR + sumM * BETA_M * phaseMR) * uSunIntensity * transitFactor
+      + uSunIntensity * vec3(0.0005, 0.0009, 0.0018);
     #endif
 
     // 4.3 Specular Highlights (GGX Direct Sun Reflection)
@@ -640,7 +663,8 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
 
     // 5. Final Composite
     vec3 finalComposite = mix(finalBaseColor, skyReflection, finalFresnel);
-    return mix(vec3(0.005, 0.024, 0.055) * dayVis, finalComposite, nearW);
+    vec3 photoBody = photoSea * uSunIntensity * sunT * (max(sunVec.y, 0.0) / PI + 0.03);
+    return mix(photoBody, finalComposite, nearW);
   }
 
   // Orbital / high-altitude water shading
@@ -648,7 +672,8 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
   float F = 0.04 + 0.96 * pow(1.0 - cosV, 5.0);
   vec3 r = reflect(d, n);
   float spec = pow(max(dot(r, L), 0.0), 120.0) * 0.45 * shadow;
-  vec3 body = vec3(0.005, 0.024, 0.055) * uSunIntensity * sunT * (max(sunVec.y, 0.0) * 0.25 + 0.05);
+  // Ocean colour from the Blue Marble photo, lit like the land.
+  vec3 body = photoSea * uSunIntensity * sunT * (max(sunVec.y, 0.0) / PI + 0.03);
   vec3 skyR = uSunIntensity * vec3(0.02, 0.05, 0.12) * dayVis;
   return body * (1.0 - F) + skyR * F + uSunIntensity * sunT * spec;
 }
@@ -778,14 +803,18 @@ void main() {
     float waterFar;
     float heightFar;
     vec3 albedo = globalAlbedo(nf, waterFar, heightFar);
-    float wNear = 1.0 - smoothstep(35000.0, 140000.0, padDist);
+    vec3 photo = albedo;
+    // Close-up water (metre-scale waves) only when the camera is low; from orbit it would
+    // alias into grain, so the photo's ocean takes over as you climb.
+    float wNear = (1.0 - smoothstep(35000.0, 140000.0, padDist)) * (1.0 - smoothstep(3000.0, 30000.0, h0));
+    float wSite = 1.0 - smoothstep(3000.0, 10000.0, padDist);
     float water = waterFar;
     float coastDist = 1e5;
     if (wNear > 0.0) {
       float waterNear;
       vec3 albedoNear = nearAlbedo(local, t, waterNear, coastDist);
-      albedo = mix(albedo, albedoNear, wNear);
-      water = mix(waterFar, waterNear, wNear);
+      albedo = mix(albedo, albedoNear, wSite);
+      water = mix(waterFar, waterNear, wSite);
     }
     float ndl = dot(n, L);
     vec3 sunT = extinction(sunDepth(0.0, ndl)) * transitFactor;
@@ -805,10 +834,16 @@ void main() {
     vec3 skyLight = uSunIntensity * transitFactor * vec3(0.012, 0.022, 0.045) * smoothstep(-0.1, 0.3, ndl);
     vec3 landCol = albedo * (sunLight + skyLight) * viewT + inscatter;
     float night = 1.0 - smoothstep(-0.15, 0.05, ndl);
-    float cities = (1.0 - water) * smoothstep(0.5, 0.62, fbm(nf * 5.0 + 11.0, 3)) * smoothstep(0.62, 0.85, fbm(nf * 60.0, 3));
-    landCol += vec3(1.0, 0.6, 0.25) * cities * night * 0.02 * uSunIntensity * viewT;
+    vec3 nightTex = sampleEarth(uEarthNight, ecefToEarthUV(nf));
+    float cityGlow = max(0.0, max(nightTex.r, nightTex.g) - nightTex.b * 0.65);
+    cityGlow = pow(clamp(cityGlow * 1.75, 0.0, 1.0), 1.45) * (1.0 - water);
+    // City lights (Black Marble) are a 2K map, about 20 km per pixel: seen from far away
+    // they read as lit cities, but up close a single pixel would wash the whole ground
+    // orange. So they only show at a distance, and never on the launch site itself.
+    float cityFade = smoothstep(15000.0, 120000.0, t) * (1.0 - wSite);
+    landCol += vec3(1.0, 0.68, 0.32) * cityGlow * night * 0.04 * uSunIntensity * viewT * cityFade;
 
-    vec3 seaCol = shadeWater(n, d, L, sunT, shadow, t, local, coastDist, wNear, h0, transitFactor);
+    vec3 seaCol = shadeWater(n, d, L, sunT, shadow, t, local, coastDist, wNear, h0, transitFactor, photo);
     // Keep near-pad water crisp (it already computes its own sky/horizon reflection),
     // blending into atmospheric aerial perspective only at high altitude / orbital distances.
     float orbitalFade = smoothstep(5000.0, 60000.0, h0);
