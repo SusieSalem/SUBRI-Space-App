@@ -1,0 +1,76 @@
+{
+  "dataset": "Mission Architect Scenarios",
+  "scenarios": [
+    {
+      "id": "wildfire_watch",
+      "title": "Wildfire Watch (Earth)",
+      "celestialBodyId": "earth",
+      "status": "mvp",
+      "goal": "Detect emerging wildfires worldwide early with <= 1 km thermal resolution and <= 12 h revisit within a $150M budget.",
+      "requirements": {
+        "budgetM": 150,
+        "missionDurationYears": 3,
+        "missionDurationDays": 1095,
+        "maxRevisitHours": 12,
+        "maxGroundResolutionKm": 1.0,
+        "minTargetsDetected": 14
+      },
+      "educationalNote": "At least three distinct architectures can pass: (1) Balanced SSO satellite, (2) Continuous GEO observatory, or (3) Dual low-cost LEO satellites.",
+      "bodyConfigUrl": "/data/earth_body.json",
+      "orbitsUrl": "/data/earth_orbits.json",
+      "targetsUrl": "/data/fires.json"
+    },
+    {
+      "id": "ice_hunter",
+      "title": "Ice Hunter (Moon)",
+      "celestialBodyId": "moon",
+      "status": "stretch",
+      "goal": "Map water-ice deposits inside Permanently Shadowed Regions (PSRs) at both lunar poles to support Artemis habitats.",
+      "requirements": {
+        "budgetM": 300,
+        "missionDurationYears": 1,
+        "missionDurationDays": 365,
+        "requireBothPoles": true,
+        "minInclinationDeg": 85,
+        "maxGroundResolutionKm": 0.5,
+        "minTargetsDetected": 8
+      },
+      "educationalNote": "No magnetic field means magnetorquers don't work on the Moon—pack reaction wheels and choose a high-inclination polar or frozen orbit.",
+      "bodyConfigUrl": "/data/moon/moon_body.json",
+      "orbitsUrl": "/data/moon/moon_orbits.json",
+      "targetsUrl": "/data/moon/moon_targets.json"
+    },
+    {
+      "id": "dust_storm_tracker",
+      "title": "Dust Storm Tracker (Mars)",
+      "celestialBodyId": "mars",
+      "status": "stretch",
+      "goal": "Monitor planet-encircling dust storms across Mars over a 2-year mission.",
+      "requirements": {
+        "budgetM": 450,
+        "missionDurationYears": 2,
+        "missionDurationDays": 730,
+        "maxRevisitHours": 24,
+        "maxGroundResolutionKm": 2.0,
+        "minTargetsDetected": 10
+      },
+      "educationalNote": "Future expansion scenario demonstrating deep-space latency and reduced solar irradiance (~43% of Earth) at 1.52 AU."
+    },
+    {
+      "id": "artemis_lunar_return",
+      "title": "Lunar Orbit and Return (Crewed Prototype)",
+      "celestialBodyId": "moon",
+      "status": "mvp",
+      "goal": "Assemble an Orion-class crew spacecraft and launch vehicle capable of carrying 4 astronauts around the Moon and safely home.",
+      "requirements": {
+        "budgetM": 3200,
+        "missionDurationYears": 0.02,
+        "missionDurationDays": 8,
+        "minTargetsDetected": 1
+      },
+      "educationalNote": "Crewed lunar prototype showcasing life-support consumables, radiation storm shelters, and trans-lunar injection payload limits.",
+      "bodyConfigUrl": "/data/moon/moon_body.json",
+      "partsUrl": "/data/crewed_lunar.json"
+    }
+  ]
+}

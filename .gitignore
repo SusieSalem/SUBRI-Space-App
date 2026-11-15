@@ -3,6 +3,10 @@ node_modules/
 /.pnp
 .pnp.js
 
+# Python (data-prep, managed with uv)
+.venv/
+__pycache__/
+
 # Production build artifacts
 dist/
 build/
