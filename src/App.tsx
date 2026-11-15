@@ -33,6 +33,7 @@ export default function App() {
   const [parts, setParts] = useState<PartId[]>(["capsule", "serviceLarge", "lifeSupport7", "solarPanels"]);
   const [rocket, setRocket] = useState<RocketId>("heavy");
   const [follow, setFollow] = useState(false);
+  const [panelsHidden, setPanelsHidden] = useState(false);
   const [mission, setMission] = useState<MissionState | null>(null);
   const [running, setRunning] = useState(false);
   const [speed, setSpeed] = useState(1);
@@ -95,7 +96,7 @@ export default function App() {
         </div>
       </header>
 
-      <aside className="panel left">
+      <aside className={`panel left ${panelsHidden ? "is-hidden" : ""}`}>
         <h2>Spacecraft</h2>
         <p className="hint">Pick the parts. Some can't be fitted together.</p>
         {Object.keys(CATEGORY_LABEL).map((cat) => (
@@ -123,7 +124,7 @@ export default function App() {
         ))}
       </aside>
 
-      <aside className="panel right">
+      <aside className={`panel right ${panelsHidden ? "is-hidden" : ""}`}>
         <h2>Readiness</h2>
 
         <Gauge
@@ -192,7 +193,7 @@ export default function App() {
         )}
       </aside>
 
-      <TrajectoryMap clock={clock} phaseLabel={phaseLabel} />
+      <TrajectoryMap clock={clock} />
 
       <footer className="controls">
         <div className="phase">
@@ -230,6 +231,36 @@ export default function App() {
           </div>
           <button className={`follow-toggle ${follow ? "on" : ""}`} onClick={() => setFollow((f) => !f)}>
             {follow ? "Following spacecraft" : "Follow spacecraft"}
+          </button>
+          <button
+            className={`panels-toggle ${panelsHidden ? "on" : ""}`}
+            aria-pressed={panelsHidden}
+            aria-label={panelsHidden ? "Show panels" : "Hide panels"}
+            title={panelsHidden ? "Show panels" : "Hide panels"}
+            onClick={() => setPanelsHidden((h) => !h)}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              {panelsHidden ? (
+                <>
+                  <path d="M3 3l18 18" />
+                  <path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.9 8.3 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6" />
+                  <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+                </>
+              ) : (
+                <>
+                  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" />
+                  <circle cx="12" cy="12" r="3" />
+                </>
+              )}
+            </svg>
           </button>
         </div>
         {!canLaunch && !inFlight && phase !== "splashdown" && (

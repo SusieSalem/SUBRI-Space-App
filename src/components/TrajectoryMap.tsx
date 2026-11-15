@@ -14,7 +14,6 @@ import {
 
 interface Props {
   clock: React.MutableRefObject<MissionClock>;
-  phaseLabel: string;
 }
 
 const MARGIN = 0.08;

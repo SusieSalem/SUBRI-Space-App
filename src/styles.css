@@ -155,9 +155,22 @@ body,
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--faint) transparent;
+  transition: transform 0.25s ease, opacity 0.25s ease, visibility 0.25s;
 }
 .panel.left {
   left: 16px;
+  bottom: 16px; /* aligned with .map-card */
+}
+.panel.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+.panel.left.is-hidden {
+  transform: translateX(calc(-100% - 16px));
+}
+.panel.right.is-hidden {
+  transform: translateX(calc(100% + 16px));
 }
 .panel.right {
   right: 16px;
@@ -504,8 +517,6 @@ button.primary:hover:not(:disabled) {
   gap: 8px;
   align-items: center;
   flex: none;
-  padding-left: 16px;
-  border-left: 1px solid var(--glass-border);
 }
 
 /* Speed: segmented control */
@@ -598,6 +609,19 @@ button.primary:hover:not(:disabled) {
   transform: translateX(16px);
 }
 
+/* Hide/show panels: icon-only, square, same height as text buttons */
+.panels-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+.panels-toggle svg {
+  display: block;
+  width: 1.25em;
+  height: 1.25em;
+}
+
 .why {
   color: var(--muted);
   flex-basis: 100%;
@@ -633,8 +657,6 @@ button.primary:hover:not(:disabled) {
   }
   .buttons {
     flex-wrap: wrap;
-    padding-left: 0;
-    border-left: 0;
   }
   .speed {
     margin-left: auto;
