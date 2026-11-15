@@ -4,10 +4,11 @@ A 3D browser game built by team !subri for the NASA Space Apps Challenge 2026, "
 
 ## Status
 
-Playable prototype in two steps, in one continuous world:
+Playable prototype in three steps, in one continuous world:
 
-1. **Assembly.** You start on the ground at the launch pad. The whole stack stands on the pad: rocket, crew spacecraft and escape tower. Pick parts and a rocket on the left and the stack updates live. The gauges on the right say whether it is ready.
-2. **Launch and flight.** The rocket flies under real physics from the pad to the Moon and back, and the camera stays with it the whole way. There are no scene changes or fades: the pad drops away, the sky darkens, the Earth curves below because the rocket is actually climbing.
+1. **Assembly.** You start on the ground at the launch pad. The whole stack stands on the pad: rocket, crew spacecraft and escape tower. Pick parts and a rocket on the left and the stack updates live. The gauges on the right say whether it is ready. You also pick the launch weather and a real solar storm from NASA's DONKI archive to fly through.
+2. **Orbit planning.** Like a maneuver node in an orbit game, you set three numbers: the height of the parking orbit, the burn point (how far ahead the Moon is when you fire) and the delta-v of the trans-lunar burn. A map shows the predicted trip to the Moon and back and three checks tell you whether it reaches the Moon, has enough propellant and comes home. The prediction flies the real burn and the autopilot's course corrections on a copy of the flight, so what you plan is what you fly. You can also launch straight away with the autopilot's own plan.
+3. **Launch and flight.** The rocket flies under real physics from the pad to the Moon and back, and the camera stays with it the whole way. There are no scene changes or fades: the pad drops away, the sky darkens, the Earth curves below because the rocket is actually climbing. Your flight is compared live with NASA's real Artemis II trajectory.
 
 Part, rocket, and engine numbers in `src/core/` are loaded from `public/data/crewed_lunar.json` (sourced NASA Orion CM, ESA European Service Module, SLS Block 1, Falcon 9 / Falcon Heavy and Vulcan Centaur figures, typed by `CrewedLunarDataset` in `src/types/mission.ts`). With them, the flight simulation flies the dataset's reference designs end to end: `crewed_flyby` on Medium and `crewed_min_orbit` / `crewed_full_artemis` on Heavy reach the Moon and splash down; Light reaches orbit but cannot send the capsule to the Moon.
 
@@ -16,12 +17,15 @@ Part, rocket, and engine numbers in `src/core/` are loaded from `public/data/cre
 The physics live in `src/core/` and have no rendering code in them:
 
 - Gravity from the Earth and the Moon (the Moon moves on its orbit), thrust and propellant use per stage with sea-level and vacuum Isp, drag in an exponential atmosphere that turns with the Earth, and automatic staging when a stage runs dry. Dropped stages keep falling under gravity and drag.
-- An autopilot flies the mission like a real one: vertical rise, gravity turn, closed-loop guidance into a ~185 km parking orbit, a trans-lunar injection burn at the moment that sends the spacecraft round the Moon, two course corrections for a free return, service module separation, a lifting re-entry and parachutes.
+- The Moon goes round the Earth the same way the Earth turns (prograde), like the real one, and the trip is planned to meet it: the trans-lunar burn happens when the Moon is the chosen angle ahead, so that the Moon arrives where the spacecraft crosses its orbit about four days later.
+- An autopilot flies the mission like a real one: vertical rise, gravity turn, closed-loop guidance to the parking orbit (coast to apoapsis, then circularise), a trans-lunar injection burn at the moment that sends the spacecraft round the Moon (yours from the planner, or its own free-return search), course corrections for a free return, service module separation, a lifting re-entry and parachutes.
+- Life support runs out: the capsule and life support parts give the days of oxygen, water and CO2 scrubbing on board, counted from liftoff. A trip that takes longer than that loses the crew.
+- When the flight ends, `src/core/missionReport.ts` builds the mission report: success, partial or failure, the root cause first (for example "life support ran out 80 h before splashdown" or "the way home missed the Earth, and there was no propellant left to correct it"), then every other finding with its numbers and what to change: re-entry load, life support and propellant margins, the solar storm and the budget.
 - You can take over at any time (`WASD` to steer, `Shift`/`Ctrl` throttle, `Z` full, `X` cut, `T` to give control back to the autopilot).
 - Time warp (`Auto`, or `1x` to `100,000x`), limited to `4x` while engines run or inside the atmosphere. Map view (`M`) shows the predicted path and the Moon's orbit.
 - The HUD shows altitude, vertical and orbital speed, apoapsis and periapsis, distance to the Moon, fuel in the current stage, throttle, peak g and mission time.
 
-To run the simulation without the browser, `src/core/simulate.ts` can be loaded in Node (for example through Vite's `ssrLoadModule`) and stepped with `sim.advance(seconds)`.
+To run the simulation without the browser, `src/core/simulate.ts` can be loaded in Node (for example through Vite's `ssrLoadModule`) and stepped with `sim.advance(seconds)`. The orbit planner's prediction (`src/core/orbitPlan.ts`) runs the same code in a web worker (`src/core/planWorker.ts`) so dragging the controls stays smooth.
 
 ## The game
 
@@ -161,7 +165,7 @@ public/
     moon/                Lunar Ice Hunter constants, orbits, and LRO polar PSR targets
   models/                Blender exports (.glb)
 src/
-  main.tsx               Entry point, imports Firebase
+  main.tsx               Entry point; loads Firebase after the game is on screen
   App.tsx                UI: parts panel, readiness gauges, mission controls
   styles.css
   firebase.ts            Firebase app setup, exports `app`
@@ -171,8 +175,13 @@ src/
     crewedData.ts        Loads crewed_lunar.json through the typed contract
     design.ts            Spacecraft parts, totals and design checks (from crewed_lunar.json)
     launchCheck.ts       Rockets and whether the spacecraft fits (from crewed_lunar.json)
-    orbit.ts             Constants, gravity, atmosphere, orbit elements, trajectory propagator
-    simulate.ts          Real-physics 50 Hz flight: vehicle, staging, autopilot, burn planning
+    orbit.ts             Constants, gravity, atmosphere, orbit elements, trajectory propagator, Sun and Moon ephemeris
+    simulate.ts          Real-physics 50 Hz flight: vehicle, staging, autopilot, burn planning, life support
+    orbitPlan.ts         Orbit planner: plan, prediction from the real parking orbit, checks, "Suggest a plan"
+    planWorker.ts        Runs the planner's exact prediction off the main thread
+    missionReport.ts     Mission report: verdict, root cause and findings for a finished flight
+    artemis2.ts          NASA's Artemis II path put into the game's frame and mission clock
+    spaceWeather.ts      DONKI solar storms and what they do to the crew
     vehicleData.ts       Stage and engine figures, launch abort system, ESM engine (from crewed_lunar.json)
   scenes/
     FlightScene.tsx      Continuous launch-to-Moon scene: floating origin, debris, smoke, orbit lines
@@ -189,7 +198,9 @@ src/
   audio/
     soundManager.ts      Procedural Web Audio API sound effects
   components/
+    OrbitPlanner.tsx     Orbit planning step: maneuver controls, trip map, departure close-up, flight checks
     TrajectoryMap.tsx    Top-down trajectory minimap
+    TutorialOverlay.tsx  Step-by-step guide for the assembly and flight screens
 docs/
   landing-placeholder.html   The hand-made landing page that was in dist/ before the app existed
 firebase.json            Firebase Hosting config
@@ -205,7 +216,7 @@ npm install
 npm run dev
 ```
 
-Then open http://localhost:5173. On the pad, drag to look around the rocket or spacecraft and scroll to zoom. Pick parts and a rocket on the left, check the gauges on the right, and press Launch.
+Then open http://localhost:5173. On the pad, drag to look around the rocket or spacecraft and scroll to zoom. Pick parts and a rocket on the left, check the gauges on the right, then press "Plan the orbit" to plan the trip (or "Launch with autopilot plan" to skip it) and "Launch this plan".
 
 To check that everything compiles:
 
@@ -213,7 +224,7 @@ To check that everything compiles:
 npm run build
 ```
 
-Distances are compressed so the Moon is visible from Earth: in the game it is 16 Earth radii away, the real figure is about 60.
+Distances are real: the Moon orbits at 384,400 km.
 
 ## Deploying
 
