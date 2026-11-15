@@ -9,6 +9,7 @@ import {
 } from "./core/design";
 import { ROCKETS, ROCKETS_BY_ID, launchCheck, type RocketId } from "./core/launchCheck";
 import { COUNTDOWN_S, FlightSim } from "./core/simulate";
+import { ARTEMIS2, artemisAltitudeAt } from "./core/artemis2";
 import FlightScene, { type Quality, type Telemetry, type WarpControl } from "./scenes/FlightScene";
 
 /** Step 1 is assembly on the pad; step 2 is the flight, in the same world. */
@@ -44,6 +45,14 @@ function formatDistance(m: number) {
   if (Math.abs(km) >= 10000) return `${fmt.format(Math.round(km))} km`;
   if (Math.abs(km) >= 1) return `${km.toFixed(1)} km`;
   return `${Math.round(m)} m`;
+}
+
+/** Mission time as "4d 22h" (or "5h 10m" under a day). */
+function formatMissionTime(s: number) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`;
 }
 
 function formatSpeed(ms: number) {
@@ -365,6 +374,7 @@ export default function App() {
               <Bar label={`Fuel / ${tel.fuelName}`} fill={tel.fuel} />
               <Bar label="Throttle" fill={tel.throttle} />
             </div>
+            <ArtemisComparison tel={tel} />
             <span className={`small ${tel.autopilot ? "ok" : "warn"}`}>
               {tel.autopilot ? "Autopilot flying (press T or WASD to take over)" : "Manual control (press T for autopilot)"}
             </span>
@@ -411,6 +421,66 @@ export default function App() {
           </footer>
         </>
       )}
+    </div>
+  );
+}
+
+/** The player's flight next to NASA's real Artemis II, on the same mission clock. */
+function ArtemisComparison({ tel }: { tel: Telemetry }) {
+  const missionT = tel.t - COUNTDOWN_S;
+  const artemisAlt = artemisAltitudeAt(missionT);
+  // The closest approach is known once the spacecraft has been moving away from the Moon for an hour.
+  const flybyDone = isFinite(tel.closestMoon) && tel.t - tel.closestMoonT > 3600 && tel.moonDistance > tel.closestMoon;
+  const km = (m: number) => `${fmt.format(Math.round(m / 1000))} km`;
+  const rows: { label: string; you: string; artemis: string }[] = [
+    {
+      label: "Closest to the Moon",
+      you: flybyDone ? `${km(tel.closestMoon)}, T+${formatMissionTime(tel.closestMoonT - COUNTDOWN_S)}` : "-",
+      artemis: `${fmt.format(ARTEMIS2.closestMoonAltitudeKm)} km, T+${formatMissionTime(ARTEMIS2.closestMoonMissionTimeS)}`,
+    },
+    {
+      label: "Farthest from Earth",
+      you: flybyDone ? km(tel.maxAltitude) : "-",
+      artemis: `${fmt.format(ARTEMIS2.maxEarthAltitudeKm)} km`,
+    },
+    {
+      label: "Entry interface",
+      you: isFinite(tel.entryT) ? `T+${formatMissionTime(tel.entryT - COUNTDOWN_S)}` : "-",
+      artemis: `T+${formatMissionTime(ARTEMIS2.entryInterfaceMissionTimeS)}`,
+    },
+  ];
+  return (
+    <div className="artemis-compare">
+      <span className="label">You vs NASA's Artemis II (real flight, April 2026)</span>
+      {artemisAlt !== null && !tel.done && (
+        <span className="small">
+          At T+{formatMissionTime(missionT)} Artemis II was {km(artemisAlt)} from Earth; you are {km(tel.altitude)}.
+        </span>
+      )}
+      <table className="small mono">
+        <thead>
+          <tr>
+            <th />
+            <th>You</th>
+            <th>Artemis II</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label}>
+              <td>{r.label}</td>
+              <td>{r.you}</td>
+              <td>{r.artemis}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <span className="small muted">
+        Orange line in the map (M): Artemis II's path, drawn round the game's Moon on your clock.{" "}
+        <a href={ARTEMIS2.sourceUrl} target="_blank" rel="noreferrer">
+          NASA ephemeris
+        </a>
+      </span>
     </div>
   );
 }
