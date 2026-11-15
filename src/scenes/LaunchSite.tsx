@@ -18,23 +18,29 @@ function useGroundTexture() {
     c.width = c.height = size;
     const g = c.getContext("2d")!;
     const mid = size / 2;
-    // Grass with a little noise.
-    g.fillStyle = "rgb(58,68,32)";
-    g.fillRect(0, 0, size, size);
-    for (let i = 0; i < 9000; i++) {
-      const x = Math.random() * size;
-      const y = Math.random() * size;
-      const v = 40 + Math.random() * 30;
-      g.fillStyle = `rgba(${v + 10},${v + 22},${v - 10},0.25)`;
-      g.fillRect(x, y, 2 + Math.random() * 4, 2 + Math.random() * 4);
-    }
-    // Crawlerway to the assembly building (towards -X, -Z).
+    // Clear canvas so only the crawlerway and concrete hardstand are drawn,
+    // letting the planet shader's procedural terrain and atmospheric haze show seamlessly!
+    g.clearRect(0, 0, size, size);
+
+    // Crawlerway to the assembly building (towards -X, -Z) with soft gravel shoulders.
     g.save();
     g.translate(mid, mid);
     g.rotate(Math.atan2(-900, -800));
+    g.fillStyle = "rgba(130,126,116,0.45)";
+    g.fillRect(0, -14, mid * 1.5, 28);
     g.fillStyle = "rgb(150,146,136)";
     g.fillRect(0, -9, mid * 1.5, 18);
     g.restore();
+
+    // Soft outer perimeter blend around the concrete pad
+    const padGrad = g.createRadialGradient(mid, mid, 64, mid, mid, 92);
+    padGrad.addColorStop(0, "rgba(145,143,136,0.85)");
+    padGrad.addColorStop(1, "rgba(145,143,136,0)");
+    g.fillStyle = padGrad;
+    g.beginPath();
+    g.arc(mid, mid, 92, 0, Math.PI * 2);
+    g.fill();
+
     // Concrete hardstand around the pad.
     g.fillStyle = "rgb(160,158,152)";
     g.beginPath();
@@ -48,22 +54,12 @@ function useGroundTexture() {
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 8;
 
-    // Fade the edge so the mesh blends into the sky shader's terrain.
-    const a = document.createElement("canvas");
-    a.width = a.height = 256;
-    const ag = a.getContext("2d")!;
-    const grad = ag.createRadialGradient(128, 128, 90, 128, 128, 128);
-    grad.addColorStop(0, "#fff");
-    grad.addColorStop(1, "#000");
-    ag.fillStyle = grad;
-    ag.fillRect(0, 0, 256, 256);
-    const alpha = new THREE.CanvasTexture(a);
-    return { tex, alpha };
+    return { tex };
   }, []);
 }
 
 export default function LaunchSite({ rocket, parts, armSwing }: { rocket: RocketId; parts: PartId[]; armSwing: React.MutableRefObject<number> }) {
-  const { tex, alpha } = useGroundTexture();
+  const { tex } = useGroundTexture();
   const dims = stackDims(rocket, parts);
   const r = ROCKET_SPECS[rocket].radius;
   const towerX = -(r + 8);
@@ -85,7 +81,7 @@ export default function LaunchSite({ rocket, parts, armSwing }: { rocket: Rocket
     <group>
       <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <circleGeometry args={[700, 96]} />
-        <meshStandardMaterial map={tex} alphaMap={alpha} transparent roughness={0.95} depthWrite={false} />
+        <meshStandardMaterial map={tex} transparent roughness={0.95} depthWrite={false} />
       </mesh>
 
       {/* Launch mount with flame trench */}
