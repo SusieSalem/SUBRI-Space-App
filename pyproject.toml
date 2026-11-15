@@ -1,0 +1,6 @@
+[project]
+name = "mission-architect-data-prep"
+version = "0.1.0"
+description = "Scripts that build and validate the NASA datasets in public/data/"
+requires-python = ">=3.10"
+dependencies = []  # standard library only
