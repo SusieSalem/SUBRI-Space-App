@@ -3,7 +3,8 @@
 //
 // Frame: Earth-centred inertial (ECI), metres and seconds, double precision.
 // The Earth spins about -Z, so a point on the equator moves towards +X ("east"
-// at the pad). The Moon orbits in the XY plane, so a due-east launch from the
+// at the pad). The Moon orbits in the XY plane the same way round (prograde, like
+// the real one), so a due-east launch from the
 // equator keeps the whole mission in one plane.
 // Plain TypeScript, no rendering code, so it can be tested in Node.
 
@@ -297,15 +298,22 @@ export function astronomicalMoonDirectionAt(
 
 /* --------------------------------------------------------------- bodies */
 
+/**
+ * Angle of the Moon on its orbit at time t. The Moon goes round the same way the
+ * Earth spins (clockwise seen from +Z in this frame, see ecefToEci), as the real
+ * one does, so a spacecraft launched east is already moving the Moon's way.
+ */
+export const moonAngle = (t: number) => MOON_ANGLE0 - MOON_RATE * t;
+
 export function moonPosition(t: number): Vec3 {
-  const a = MOON_ANGLE0 + MOON_RATE * t;
+  const a = moonAngle(t);
   return { x: MOON_DISTANCE * Math.cos(a), y: MOON_DISTANCE * Math.sin(a), z: 0 };
 }
 
 export function moonVelocity(t: number): Vec3 {
-  const a = MOON_ANGLE0 + MOON_RATE * t;
+  const a = moonAngle(t);
   const v = MOON_DISTANCE * MOON_RATE;
-  return { x: -v * Math.sin(a), y: v * Math.cos(a), z: 0 };
+  return { x: v * Math.sin(a), y: -v * Math.cos(a), z: 0 };
 }
 
 /** Earth rotation angle at time t (radians); t = 0 is the start of the countdown. */
@@ -542,4 +550,56 @@ export function propagate(
   }
   if (points) points.push(vcopy(s.r));
   return { end: s, minMoonDist, minMoonTime, minEarthAlt, minEarthTime, hitEarth, hitMoon, points };
+}
+
+/* -------------------------------------------------------- phase angle */
+
+/**
+ * How far ahead the Moon is, in degrees (0..360), measured from the spacecraft
+ * along its direction of travel around the Earth. This is the "phase angle" a
+ * trans-lunar injection is timed by: it does not depend on the date, only on
+ * where the spacecraft is relative to the Moon.
+ */
+export function phaseToMoon(r: Vec3, v: Vec3, t: number): number {
+  const m = moonPosition(t);
+  const n = vnorm(vcross(r, v));
+  const deg = (Math.atan2(vdot(vcross(r, m), n), vdot(r, m)) * 180) / Math.PI;
+  return (deg + 360) % 360;
+}
+
+/**
+ * Coasts from `start` (at least `lead` seconds) until the Moon is `phaseDeg`
+ * ahead, and returns that state. Used both by the planner and by the autopilot,
+ * so the flight burns exactly where the plan said.
+ */
+export function findPhaseCrossing(start: CoastState, phaseDeg: number, lead = 120): CoastState {
+  const target = ((phaseDeg % 360) + 360) % 360;
+  // Degrees still to go until the target; shrinks as the spacecraft moves on.
+  const toGo = (s: CoastState) => (phaseToMoon(s.r, s.v, s.t) - target + 360) % 360;
+  let s = start;
+  const leadEnd = start.t + lead;
+  while (s.t < leadEnd) s = rk4(s, Math.min(10, leadEnd - s.t));
+  let prev = toGo(s);
+  for (let i = 0; i < 4000; i++) {
+    const next = rk4(s, 10);
+    const g = toGo(next);
+    if (g > prev + 180) {
+      // Wrapped past the target inside this step: refine by bisection.
+      let lo = s;
+      let hiDt = 10;
+      for (let k = 0; k < 20; k++) {
+        const mid = rk4(lo, hiDt / 2);
+        if (toGo(mid) > prev + 180) hiDt /= 2;
+        else {
+          lo = mid;
+          hiDt /= 2;
+          prev = toGo(mid);
+        }
+      }
+      return lo;
+    }
+    s = next;
+    prev = g;
+  }
+  return s;
 }

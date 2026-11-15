@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MISSION_REQUIREMENTS,
   PARTS,
@@ -8,6 +8,7 @@ import {
   type PartId,
 } from "./core/design";
 import { ROCKETS, ROCKETS_BY_ID, launchCheck, type RocketId } from "./core/launchCheck";
+import { DEFAULT_PLAN, type OrbitPlan } from "./core/orbitPlan";
 import { COUNTDOWN_S, FlightSim } from "./core/simulate";
 import { ARTEMIS2, artemisAltitudeAt } from "./core/artemis2";
 import {
@@ -21,10 +22,21 @@ import {
   type StormResult,
 } from "./core/spaceWeather";
 import { playAlert } from "./audio/soundManager";
-import FlightScene, { type Quality, type Telemetry, type WarpControl } from "./scenes/FlightScene";
+import type { Quality, Telemetry, WarpControl } from "./scenes/FlightScene";
 
-/** Step 1 is assembly on the pad; step 2 is the flight, in the same world. */
-type Mode = "assembly" | "flight";
+// The 3D scene and the planner are the heavy parts: load them as separate
+// chunks so the interface shows up while three.js is still downloading.
+const FlightScene = lazy(() => import("./scenes/FlightScene"));
+const OrbitPlanner = lazy(() => import("./components/OrbitPlanner"));
+
+/** Step 1 is assembly on the pad, step 2 plans the trip to the Moon, step 3 flies it, all in the same world. */
+type Mode = "assembly" | "planning" | "flight";
+
+const STEP_LABEL: Record<Mode, string> = {
+  assembly: "Step 1 of 3 / Assembly",
+  planning: "Step 2 of 3 / Orbit planning",
+  flight: "Step 3 of 3 / Launch and flight",
+};
 
 const CATEGORY_LABEL: Record<string, string> = {
   crew: "Crew",
@@ -95,6 +107,9 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("assembly");
   const [parts, setParts] = useState<PartId[]>(["capsule", "serviceLarge", "lifeSupport7", "solarPanels"]);
   const [rocket, setRocket] = useState<RocketId>("heavy");
+  const [plan, setPlan] = useState<OrbitPlan>(DEFAULT_PLAN);
+  /** The plan the current flight is flying (null: the autopilot planned it). */
+  const [flownPlan, setFlownPlan] = useState<OrbitPlan | null>(null);
   const [quality, setQuality] = useState<Quality>("low");
   const [launchDate, setLaunchDate] = useState<string>("2026-07-20");
   const [timeOfDay, setTimeOfDay] = useState<number>(8.6);
@@ -123,9 +138,9 @@ export default function App() {
   const storm = STORMS_BY_ID[stormId] ?? null;
   const stormIsDangerous = !!storm && radiationScale(storm.protonFluxPfu) >= 2;
 
-  // A fresh vehicle on the pad whenever the design changes during assembly.
+  // A fresh vehicle on the pad whenever the design changes before launch.
   useEffect(() => {
-    if (mode !== "assembly") return;
+    if (mode === "flight") return;
     simRef.current = new FlightSim(rocket, parts);
     setSimVersion((v) => v + 1);
   }, [rocket, parts, mode]);
@@ -135,8 +150,9 @@ export default function App() {
     warp.current.paused = paused;
   }, [warpSetting, paused]);
 
-  const launch = () => {
-    simRef.current = new FlightSim(rocket, parts);
+  const launch = (withPlan: OrbitPlan | null) => {
+    setFlownPlan(withPlan);
+    simRef.current = new FlightSim(rocket, parts, withPlan);
     setSimVersion((v) => v + 1);
     setWarpSetting("auto");
     setPaused(false);
@@ -145,8 +161,8 @@ export default function App() {
     setStormResult(null);
     setMode("flight");
   };
-  const backToAssembly = () => {
-    setMode("assembly");
+  const backTo = (m: Mode) => {
+    setMode(m);
     setMapView(false);
     setTel(null);
     setStormResult(null);
@@ -235,34 +251,36 @@ export default function App() {
 
   return (
     <div className={`app mode-${mode}`}>
-      <FlightScene
-        version={simVersion}
-        simRef={simRef}
-        rocket={rocket}
-        parts={parts}
-        flying={mode === "flight"}
-        warp={warp}
-        keys={keys}
-        mapView={mapView}
-        quality={quality}
-        launchDate={launchDate}
-        timeOfDay={timeOfDay}
-        syncCycle={syncCycle}
-        lookAt={lookAt}
-        onTelemetry={onTelemetry}
-      />
+      <Suspense fallback={<div className="scene-loading">Loading 3D scene…</div>}>
+        <FlightScene
+          version={simVersion}
+          simRef={simRef}
+          rocket={rocket}
+          parts={parts}
+          flying={mode === "flight"}
+          warp={warp}
+          keys={keys}
+          mapView={mapView}
+          quality={quality}
+          launchDate={launchDate}
+          timeOfDay={timeOfDay}
+          syncCycle={syncCycle}
+          lookAt={lookAt}
+          onTelemetry={onTelemetry}
+        />
+      </Suspense>
 
       <header className="topbar">
         <div className="brand">
           <span className="brand-name">Mission Architect</span>
           <span className="brand-sub">
-            {mode === "assembly" ? "Step 1 of 2 / Assembly" : "Step 2 of 2 / Launch and flight"} /{" "}
-            {MISSION_REQUIREMENTS.name}
+            {STEP_LABEL[mode]} / {MISSION_REQUIREMENTS.name}
           </span>
         </div>
         <div className="steps">
           <span className={`step ${mode === "assembly" ? "on" : "done"}`}>1 Assembly</span>
-          <span className={`step ${mode === "flight" ? "on" : ""}`}>2 Launch and flight</span>
+          <span className={`step ${mode === "planning" ? "on" : mode === "flight" ? "done" : ""}`}>2 Orbit plan</span>
+          <span className={`step ${mode === "flight" ? "on" : ""}`}>3 Launch and flight</span>
         </div>
       </header>
 
@@ -382,12 +400,15 @@ export default function App() {
 
           <footer className="controls">
             <div className="buttons">
-              <button className="primary big" disabled={!canLaunch} onClick={launch}>
-                Launch
+              <button className="primary big" disabled={!canLaunch} onClick={() => setMode("planning")}>
+                Plan the orbit
+              </button>
+              <button disabled={!canLaunch} onClick={() => launch(null)} title="Skip planning: the autopilot picks the trajectory">
+                Launch with autopilot plan
               </button>
               <span className="why small">
                 {canLaunch
-                  ? "Ready. The crew is boarding. Drag to look around the rocket, scroll to zoom."
+                  ? "Ready. Next, plan the trip to the Moon. Drag to look around the rocket, scroll to zoom."
                   : "Fix the red items on the right before you can launch."}
               </span>
               <EnvironmentControls
@@ -398,6 +419,26 @@ export default function App() {
                 syncCycle={syncCycle}
                 onSyncChange={setSyncCycle}
               />
+              <QualityToggle quality={quality} onChange={setQuality} />
+            </div>
+          </footer>
+        </>
+      )}
+
+      {mode === "planning" && (
+        <>
+          <Suspense fallback={<div className="scene-loading">Loading planner…</div>}>
+            <OrbitPlanner rocket={rocket} parts={parts} plan={plan} onChange={setPlan} />
+          </Suspense>
+          <footer className="controls">
+            <div className="buttons">
+              <button onClick={() => backTo("assembly")}>Back to assembly</button>
+              <button className="primary big" onClick={() => launch(plan)}>
+                Launch this plan
+              </button>
+              <span className="why small">
+                The autopilot flies the ascent and your burn. Small course corrections on the way are automatic.
+              </span>
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
           </footer>
@@ -450,12 +491,17 @@ export default function App() {
             <span className={`small ${tel.autopilot ? "ok" : "warn"}`}>
               {tel.autopilot ? "Autopilot flying (press T or WASD to take over)" : "Manual control (press T for autopilot)"}
             </span>
+            <span className="small muted">
+              {flownPlan
+                ? `Your plan: ${Math.round(flownPlan.parkingAltM / 1000)} km orbit, burn at ${flownPlan.phaseDeg.toFixed(1)}°, ${Math.round(flownPlan.tliDvMs)} m/s`
+                : "Trajectory chosen by the autopilot"}
+            </span>
           </aside>
 
           <footer className="controls">
             <div className="buttons">
               <button onClick={() => setPaused((p) => !p)}>{paused ? "Resume" : "Pause"}</button>
-              <button onClick={backToAssembly}>Back to assembly</button>
+              <button onClick={() => backTo("planning")}>Edit plan</button>
               <div className="speed">
                 <button className={warpSetting === "auto" ? "on" : ""} onClick={() => setWarpSetting("auto")}>
                   Auto
