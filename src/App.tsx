@@ -31,6 +31,10 @@ import {
   toggleMute,
 } from "./audio/soundManager";
 import { TutorialOverlay } from "./components/TutorialOverlay";
+import { ControlsHelp } from "./components/ControlsHelp";
+import { SettingsMenu } from "./components/SettingsMenu";
+import { WarpControl as WarpStepper } from "./components/WarpControl";
+import { ArrowLeftIcon, EarthIcon, MapIcon, MoonIcon, PauseIcon, PlayIcon } from "./components/icons";
 import type { Quality, Telemetry, WarpControl, WeatherState } from "./scenes/FlightScene";
 
 // The 3D scene and the planner are the heavy parts: load them as separate
@@ -431,23 +435,25 @@ export default function App() {
               }} title="Skip planning: the autopilot picks the trajectory">
                 Launch with autopilot plan
               </button>
+              <SettingsMenu>
+                <EnvironmentControls
+                  launchDate={displayDate}
+                  onDateChange={handleDateChange}
+                  timeOfDay={displayTime}
+                  onTimeChange={handleTimeChange}
+                  syncCycle={syncCycle}
+                  onSyncChange={setSyncCycle}
+                  weather={weather}
+                  onWeatherChange={setWeather}
+                />
+                <AudioToggle />
+                <QualityToggle quality={quality} onChange={setQuality} />
+              </SettingsMenu>
               <span className="why small">
                 {canLaunch
                   ? "Ready. Next, plan the trip to the Moon. Drag to look around the rocket, scroll to zoom."
                   : "Fix the red items on the right before you can launch."}
               </span>
-              <EnvironmentControls
-                launchDate={displayDate}
-                onDateChange={handleDateChange}
-                timeOfDay={displayTime}
-                onTimeChange={handleTimeChange}
-                syncCycle={syncCycle}
-                onSyncChange={setSyncCycle}
-                weather={weather}
-                onWeatherChange={setWeather}
-              />
-              <AudioToggle />
-              <QualityToggle quality={quality} onChange={setQuality} />
             </div>
           </footer>
         </>
@@ -470,11 +476,13 @@ export default function App() {
               }}>
                 Launch this plan
               </button>
+              <SettingsMenu>
+                <AudioToggle />
+                <QualityToggle quality={quality} onChange={setQuality} />
+              </SettingsMenu>
               <span className="why small">
                 The autopilot flies the ascent and your burn. Small course corrections on the way are automatic.
               </span>
-              <AudioToggle />
-              <QualityToggle quality={quality} onChange={setQuality} />
             </div>
           </footer>
         </>
@@ -545,66 +553,62 @@ export default function App() {
 
           <footer className="controls">
             <div className="buttons">
-              <button onClick={() => {
-                playClick();
-                setPaused((p) => !p);
-              }}>{paused ? "Resume" : "Pause"}</button>
-              <button onClick={() => {
+              <button className="ghost with-icon" title="Back to the orbit plan" onClick={() => {
                 playClick();
                 backTo("planning");
-              }}>Edit plan</button>
-              <div className="speed">
-                <button className={warpSetting === "auto" ? "on" : ""} onClick={() => {
+              }}><ArrowLeftIcon />Edit plan</button>
+              <span className="sep" aria-hidden="true" />
+              <button className="accent with-icon" title={paused ? "Resume (P)" : "Pause (P)"} onClick={() => {
                 playClick();
-                setWarpSetting("auto");
-              }}>
-                  Auto
-                </button>
-                {WARP_LEVELS.map((w) => (
-                  <button
-                    key={w}
-                    className={warpSetting === w ? "on" : ""}
-                    disabled={w > tel.maxWarp}
-                    onClick={() => {
-                playClick();
-                setWarpSetting(w);
-              }}
-                  >
-                    {w >= 1000 ? `${w / 1000}k` : `${w}x`}
-                  </button>
-                ))}
-              </div>
-              <button className={mapView ? "on" : ""} onClick={() => {
-                playClick();
-                setMapView((m) => !m);
-              }}>
-                Map (M)
-              </button>
-              <button onClick={() => {
-                playClick();
-                look("earth");
-              }}>Look at Earth</button>
-              <button onClick={() => {
-                playClick();
-                look("moon");
-              }}>Look at Moon</button>
-              <EnvironmentControls
-                launchDate={displayDate}
-                onDateChange={handleDateChange}
-                timeOfDay={displayTime}
-                onTimeChange={handleTimeChange}
-                syncCycle={syncCycle}
-                onSyncChange={setSyncCycle}
-                weather={weather}
-                onWeatherChange={setWeather}
+                setPaused((p) => !p);
+              }}>{paused ? <PlayIcon /> : <PauseIcon />}{paused ? "Resume" : "Pause"}</button>
+              <WarpStepper
+                levels={WARP_LEVELS}
+                setting={warpSetting}
+                effective={tel.warp}
+                maxWarp={tel.maxWarp}
+                onAuto={() => {
+                  playClick();
+                  setWarpSetting("auto");
+                }}
+                onChange={(w) => {
+                  playClick();
+                  setWarpSetting(w);
+                }}
               />
-              <AudioToggle />
-              <QualityToggle quality={quality} onChange={setQuality} />
+              <span className="sep" aria-hidden="true" />
+              <div className="view-group" role="group" aria-label="View">
+                <span className="label" aria-hidden="true">View</span>
+                <button className={`with-icon ${mapView ? "on" : ""}`} aria-pressed={mapView} title="Map (M)" onClick={() => {
+                  playClick();
+                  setMapView((m) => !m);
+                }}><MapIcon />Map</button>
+                <button className="with-icon" title="Look at Earth" onClick={() => {
+                  playClick();
+                  look("earth");
+                }}><EarthIcon />Earth</button>
+                <button className="with-icon" title="Look at Moon" onClick={() => {
+                  playClick();
+                  look("moon");
+                }}><MoonIcon />Moon</button>
+              </div>
+              <span className="sep" aria-hidden="true" />
+              <SettingsMenu>
+                <EnvironmentControls
+                  launchDate={displayDate}
+                  onDateChange={handleDateChange}
+                  timeOfDay={displayTime}
+                  onTimeChange={handleTimeChange}
+                  syncCycle={syncCycle}
+                  onSyncChange={setSyncCycle}
+                  weather={weather}
+                  onWeatherChange={setWeather}
+                />
+                <AudioToggle />
+                <QualityToggle quality={quality} onChange={setQuality} />
+              </SettingsMenu>
+              <ControlsHelp />
             </div>
-            <span className="why small">
-              WASD steer / Shift, Ctrl throttle / Z full, X cut / T autopilot / M map / , . warp / P pause. Drag to look
-              around, scroll to zoom.
-            </span>
           </footer>
         </>
       )}
