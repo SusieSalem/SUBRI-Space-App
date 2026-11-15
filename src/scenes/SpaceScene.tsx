@@ -7,6 +7,7 @@ import { Line, OrbitControls } from "@react-three/drei";
 import { Bloom, EffectComposer, ToneMapping, Vignette } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
 import * as THREE from "three";
+import ShaderMat from "./ShaderMat";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { PartId } from "../core/design";
 import Astronaut from "./Astronaut";
@@ -75,11 +76,11 @@ function Earth() {
       <group ref={groupRef}>
         <mesh>
           <sphereGeometry args={[EARTH_RADIUS, 160, 80]} />
-          <shaderMaterial vertexShader={earthVertex} fragmentShader={earthFragment} uniforms={earthUniforms} />
+          <ShaderMat vertexShader={earthVertex} fragmentShader={earthFragment} uniforms={earthUniforms} />
         </mesh>
         <mesh renderOrder={1}>
           <sphereGeometry args={[EARTH_RADIUS * 1.008, 128, 64]} />
-          <shaderMaterial
+          <ShaderMat
             vertexShader={earthVertex}
             fragmentShader={cloudFragment}
             uniforms={cloudUniforms}
@@ -90,7 +91,7 @@ function Earth() {
       </group>
       <mesh renderOrder={2}>
         <sphereGeometry args={[ATMOSPHERE_RADIUS, 128, 64]} />
-        <shaderMaterial
+        <ShaderMat
           ref={atmoRef}
           vertexShader={atmosphereVertex}
           fragmentShader={atmosphereFragment}
@@ -109,7 +110,7 @@ function Moon() {
   return (
     <mesh position={MOON_POSITION}>
       <sphereGeometry args={[MOON_RADIUS, 96, 48]} />
-      <shaderMaterial vertexShader={earthVertex} fragmentShader={moonFragment} uniforms={uniforms} />
+      <ShaderMat vertexShader={earthVertex} fragmentShader={moonFragment} uniforms={uniforms} />
     </mesh>
   );
 }
@@ -125,7 +126,7 @@ function Stars() {
   return (
     <mesh ref={ref} renderOrder={-10} frustumCulled={false}>
       <sphereGeometry args={[400, 64, 32]} />
-      <shaderMaterial
+      <ShaderMat
         vertexShader={starsVertex}
         fragmentShader={starsFragment}
         uniforms={uniforms}
@@ -147,7 +148,7 @@ function Sun() {
     <>
       <mesh ref={ref} renderOrder={-5} frustumCulled={false}>
         <planeGeometry args={[60, 60]} />
-        <shaderMaterial
+        <ShaderMat
           vertexShader={billboardVertex}
           fragmentShader={sunGlowFragment}
           transparent

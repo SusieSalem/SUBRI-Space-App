@@ -4,7 +4,24 @@ A 3D browser game built by team !subri for the NASA Space Apps Challenge 2026, "
 
 ## Status
 
-First playable prototype. You can pick spacecraft parts and a rocket, see whether the design is ready, and launch a crewed flight around the Moon and back. All part and rocket numbers are placeholders for now, marked `TODO` in `src/core/`.
+Playable prototype in two steps, in one continuous world:
+
+1. **Assembly.** You start on the ground at the launch pad. The whole stack stands on the pad: rocket, crew spacecraft and escape tower. Pick parts and a rocket on the left and the stack updates live. The gauges on the right say whether it is ready.
+2. **Launch and flight.** The rocket flies under real physics from the pad to the Moon and back, and the camera stays with it the whole way. There are no scene changes or fades: the pad drops away, the sky darkens, the Earth curves below because the rocket is actually climbing.
+
+All part, rocket and engine numbers are placeholders for now, marked `TODO` / `TODO-source` in `src/core/`.
+
+### How the flight works
+
+The physics lives in `src/core/` and has no rendering code in it:
+
+- Gravity from the Earth and the Moon (the Moon moves on its orbit), thrust and propellant use per stage with sea-level and vacuum Isp, drag in an exponential atmosphere that turns with the Earth, and automatic staging when a stage runs dry. Dropped stages keep falling under gravity and drag.
+- An autopilot flies the mission like a real one: vertical rise, gravity turn, closed-loop guidance into a ~185 km parking orbit, a trans-lunar injection burn at the moment that sends the spacecraft round the Moon, two course corrections for a free return, service module separation, a lifting re-entry and parachutes.
+- You can take over at any time (WASD to steer, Shift/Ctrl throttle, Z full, X cut, T to give control back to the autopilot).
+- Time warp (Auto, or 1x to 100,000x), limited to 4x while engines run or inside the atmosphere. Map view (M) shows the predicted path and the Moon's orbit.
+- The HUD shows altitude, vertical and orbital speed, apoapsis and periapsis, distance to the Moon, fuel in the current stage, throttle, peak g and mission time.
+
+To run the simulation without the browser, `src/core/simulate.ts` can be loaded in Node (for example through Vite's `ssrLoadModule`) and stepped with `sim.advance(seconds)`.
 
 ## The game
 
@@ -31,6 +48,7 @@ The 3D scene uses our own GLSL shaders, written for this project and inspired by
 - An atmosphere shell with real Rayleigh and Mie scattering, so the limb is blue and the light turns orange near the terminator
 - The Moon with maria and craters, a starfield with a Milky Way band, and the Sun with a glow
 - Bloom, ACES tone mapping and a light vignette
+- One planet shader at real scale (`src/scenes/shaders/planet.ts`) draws the Earth, its atmosphere, clouds, the coast at the launch site, the Moon, the Sun and the stars from wherever the camera is, from 2 m above the pad to lunar distance. The world is re-centred on the spacecraft every frame and uses a logarithmic depth buffer, so real distances work without precision problems. There is a High / Low quality switch for slower machines.
 
 The Earth is procedural so the prototype runs without downloading anything. NASA's Blue Marble and Black Marble images can be dropped in later for the day and night sides.
 
@@ -86,12 +104,20 @@ src/
   core/
     design.ts            Spacecraft parts, totals and design checks (placeholder numbers)
     launchCheck.ts       Rockets and whether the spacecraft fits (placeholder numbers)
+    orbit.ts             Constants, gravity, atmosphere, orbit elements, trajectory propagator
+    simulate.ts          The flight: vehicle, staging, autopilot, planning of the burns
+    vehicleData.ts       Stage and engine figures (placeholders, TODO-source)
   scenes/
-    SpaceScene.tsx       Canvas, Earth, Moon, stars, Sun, camera, post-processing
+    FlightScene.tsx      The one scene: floating origin, camera, debris, smoke, orbit lines
+    LaunchSite.tsx       Pad, service tower, buildings
+    Rocket.tsx           Light / Medium / Heavy stack with the spacecraft on top
+    Smoke.ts             GPU smoke particles
+    ShaderMat.tsx        ShaderMaterial wrapper that keeps our uniforms object
+    SpaceScene.tsx       Earlier scripted space scene (no longer shown; mission.ts still feeds the mini-map component)
     Spacecraft.tsx       Placeholder crew spacecraft built from primitives
     Astronaut.tsx        Loads astronaut.glb if present
     mission.ts           Flight path and mission phases
-    shaders/             Our own GLSL: Earth, clouds, atmosphere, Moon, stars, Sun, engine plume
+    shaders/             Our own GLSL: the planet/sky shader, Earth, Moon, stars, engine plume
 docs/
   landing-placeholder.html   The hand-made landing page that was in dist/ before the app existed
 firebase.json            Firebase Hosting config
@@ -107,7 +133,7 @@ npm install
 npm run dev
 ```
 
-Then open http://localhost:5173. Drag to orbit the camera, scroll to zoom. Pick parts on the left, check the gauges on the right, and press Launch.
+Then open http://localhost:5173. On the pad, drag to look around the rocket and scroll to zoom. Pick parts and a rocket on the left, check the gauges on the right, and press Launch.
 
 To check that everything compiles:
 

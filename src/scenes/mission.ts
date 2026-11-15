@@ -209,3 +209,25 @@ export function plannedPathPoints(): THREE.Vector3[] {
   pts.push(...transferCurve.getSpacedPoints(400));
   return pts;
 }
+
+/** Rough real-world altitude (km) and speed (km/s) for the HUD while in space. */
+export function spaceTelemetry(s: MissionState): { altitudeKm: number; speedKms: number } {
+  const r = s.position.length();
+  // Distances are compressed in the scene; stretch them back towards real values far from Earth.
+  const stretch = 1 + 2.75 * Math.min(Math.max((r - 1.2) / 2.8, 0), 1);
+  const altitudeKm = Math.max(0, (r - EARTH_RADIUS) * 6371 * stretch);
+  const p = s.phaseProgress;
+  const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+  let speedKms = 0;
+  switch (s.phase) {
+    case "launch": speedKms = lerp(0, 7.8, p); break;
+    case "parking": speedKms = 7.8; break;
+    case "tli": speedKms = lerp(7.8, 10.9, p); break;
+    case "coast": speedKms = lerp(10.9, 1.0, Math.sqrt(p)); break;
+    case "flyby": speedKms = lerp(1.0, 2.3, Math.sin(p * Math.PI)) ; break;
+    case "return": speedKms = lerp(1.0, 10.9, p * p); break;
+    case "reentry": speedKms = lerp(11.0, 0.2, p); break;
+    default: speedKms = 0;
+  }
+  return { altitudeKm, speedKms };
+}

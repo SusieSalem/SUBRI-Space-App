@@ -411,3 +411,132 @@ button.primary {
     right: 272px;
   }
 }
+
+/* Two-step flow: assembly on the ground, then launch and flight */
+.muted {
+  color: var(--muted);
+}
+.panel.right.assembly {
+  bottom: 120px;
+}
+.mode-assembly .controls {
+  justify-content: center;
+}
+.steps {
+  display: flex;
+  gap: 6px;
+  pointer-events: none;
+}
+.step {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  background: rgba(8, 11, 18, 0.5);
+}
+.step.on {
+  color: var(--text);
+  border-color: rgba(95, 168, 255, 0.6);
+}
+.step.done {
+  color: var(--ok);
+}
+button.primary.big {
+  padding: 14px 40px;
+  font-size: 15px;
+}
+.quality {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin-left: auto;
+}
+.quality .label {
+  margin-right: 4px;
+}
+.quality button {
+  padding: 6px 10px;
+}
+
+.flight-hud {
+  position: absolute;
+  top: 72px;
+  right: 16px;
+  width: 290px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hud-row,
+.hud-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hud-row .value {
+  font-size: 16px;
+}
+.hud-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.hud-grid .value {
+  font-size: 13px;
+}
+.mode-ascent .controls,
+.mode-space .controls {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(720px, calc(100% - 32px));
+}
+
+.fade {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s ease;
+}
+.fade.on {
+  opacity: 1;
+}
+
+/* Flight HUD (physics flight) */
+.mode-flight .flight-hud {
+  width: 340px;
+}
+.hud-grid {
+  row-gap: 10px;
+}
+.hud-row .small {
+  margin-top: 2px;
+}
+.hud-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hud-bar .bar {
+  margin: 4px 0 0;
+}
+.mode-flight .controls {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(900px, calc(100% - 32px));
+}
+.mode-flight .speed button {
+  padding: 6px 8px;
+  font-size: 12px;
+}
