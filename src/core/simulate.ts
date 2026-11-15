@@ -20,6 +20,7 @@ import {
   coastRk4,
   coastStep,
   ecefToEci,
+  findPhaseCrossing,
   gravity,
   moonPosition,
   moonVelocity,
@@ -46,6 +47,7 @@ import {
   SERVICE_PROPELLANT_KG,
   type StageData,
 } from "./vehicleData";
+import type { OrbitPlan } from "./orbitPlan";
 
 /** Seconds of countdown before liftoff. Mission time t = 0 is the start of the countdown. */
 export const COUNTDOWN_S = 10;
@@ -60,7 +62,8 @@ const PERILUNE_TARGET = R_MOON + 4500000;
 const PHYSICS_DT = 0.02; // 50 Hz
 const MAX_G = 4;
 /** Service module delta-v kept back for course corrections (m/s). */
-const SERVICE_RESERVE_DV = 150;
+/** Delta-v the service module keeps for course corrections (m/s). */
+export const SERVICE_RESERVE_DV = 150;
 /** Centre-core throttle while strap-on boosters burn (an engineering assumption, not dataset values). */
 const CORE_THROTTLE_WITH_BOOSTERS: Record<RocketId, number> = { light: 1, medium: 0.55, heavy: 1 };
 
@@ -131,6 +134,12 @@ export class FlightSim {
   message = "";
 
   readonly rocketId: RocketId;
+  /** Target height of the circular parking orbit (m). */
+  readonly parkingAlt: number;
+  /** The player's trans-lunar plan, if they made one in the orbit planner. */
+  plan: OrbitPlan | null;
+  /** Stop advancing once in the parking orbit (used by the planner). */
+  holdAtParking = false;
   readonly hasCapsule: boolean;
   private boosters: Stage | null;
   private stage1: Stage;
@@ -155,6 +164,10 @@ export class FlightSim {
   private planned = false;
   private chuteTime = 0;
   private tcm2Planned = false;
+  private circularising = false;
+  /** State on reaching the parking orbit (the planner predicts from here). */
+  parkingState: CoastState | null = null;
+  private lastEcc = Infinity;
 
   maxG = 0;
   /** 0..1 re-entry heating, for the glow. */
@@ -167,8 +180,10 @@ export class FlightSim {
     service: false,
   };
 
-  constructor(rocket: RocketId, parts: PartId[]) {
+  constructor(rocket: RocketId, parts: PartId[], plan: OrbitPlan | null = null) {
     this.rocketId = rocket;
+    this.plan = plan;
+    this.parkingAlt = plan?.parkingAltM ?? PARKING_ALT;
     const data = ROCKET_DATA[rocket];
     this.boosters = data.boosters ? { data: data.boosters, prop: data.boosters.propKg, attached: true } : null;
     this.stage1 = { data: data.stage1, prop: data.stage1.propKg, attached: true };
@@ -267,6 +282,7 @@ export class FlightSim {
     let guard = 0;
     while (remaining > 1e-9 && guard++ < 200000) {
       if (this.phase === "splashdown" || this.phase === "failed") return;
+      if (this.holdAtParking && this.phase === "parking") return;
       const fine = this.onPad || this.throttle > 0 || this.altitude < ATMOSPHERE_TOP || this.phase === "prelaunch";
       let dt: number;
       if (fine) {
@@ -587,10 +603,50 @@ export class FlightSim {
     const hdir = vh > 1 ? vscale(horiz, 1 / vh) : east;
     const orbit = this.orbit();
 
-    if (orbit.periapsisAlt > Math.min(PARKING_ALT - 12000, alt - 6000)) {
-      this.throttle = 0;
-      this.phase = "parking";
-      this.emit("message", `Orbit reached: ${Math.round(orbit.periapsisAlt / 1000)} x ${Math.round(orbit.apoapsisAlt / 1000)} km`);
+    const target = this.parkingAlt;
+
+    if (orbit.periapsisAlt > Math.min(target - 12000, alt - 6000)) {
+      this.enterParking(orbit);
+      return;
+    }
+
+    // Apoapsis at the target height: stop climbing, coast up to it and circularise
+    // there (like a real perigee-raise burn). Without this a powerful first stage
+    // overshoots into a long ellipse instead of the parking orbit the plan asked for.
+    if (alt > 50000 && (this.circularising || orbit.apoapsisAlt >= target - 2000)) {
+      const r = vlen(this.r);
+      const rApo = R_EARTH + Math.max(orbit.apoapsisAlt, alt);
+      const vAtApo = Math.sqrt(Math.max(0, MU_EARTH * (2 / rApo - 1 / orbit.semiMajorAxis)));
+      const dvCirc = Math.max(0, Math.sqrt(MU_EARTH / rApo) - vAtApo);
+      const acc = Math.max(this.currentThrustAcc(), 0.1);
+      if (!this.circularising && (vv <= 0 || orbit.timeToApoapsis <= dvCirc / acc / 2)) {
+        this.circularising = true;
+        this.lastEcc = Infinity;
+      }
+      if (!this.circularising) {
+        this.throttle = 0;
+        this.attitude = hdir;
+        return;
+      }
+      // Burning prograde near apoapsis lowers the eccentricity until the orbit is
+      // round; once it starts to grow again the orbit is as circular as it gets.
+      const e = orbit.eccentricity;
+      if (e > this.lastEcc && e < 0.03) {
+        this.enterParking(orbit);
+        return;
+      }
+      this.lastEcc = e;
+      this.throttle = 1;
+      // Hold the height while the burn builds up the horizontal speed.
+      const gEff = MU_EARTH / (r * r) - (vh * vh) / r;
+      const vvWanted = Math.max(-60, Math.min(60, (target - alt) / 60));
+      const sUp = Math.max(-0.5, Math.min(0.85, (gEff + (vvWanted - vv) / 10) / acc));
+      this.attitude = vnorm(vadd(vscale(up, sUp), vscale(hdir, Math.sqrt(1 - sUp * sUp))));
+      if (!this.stage1.attached && this.stage2.prop <= 0) {
+        this.phase = "failed";
+        this.throttle = 0;
+        this.emit("message", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
+      }
       return;
     }
     this.throttle = 1;
@@ -609,7 +665,7 @@ export class FlightSim {
       const r = vlen(this.r);
       const vCirc = Math.sqrt(MU_EARTH / r);
       const tGo = Math.max(25, (vCirc - vh) / Math.max(thrustAcc, 0.3));
-      const vvWanted = Math.max(-40, Math.min(400, (PARKING_ALT - alt) / tGo));
+      const vvWanted = Math.max(-40, Math.min(400, (target - alt) / tGo));
       const gEff = MU_EARTH / (r * r) - (vh * vh) / r;
       const wantUp = gEff + (vvWanted - vv) / 10;
       const s = Math.max(-0.4, Math.min(0.85, wantUp / Math.max(thrustAcc, 0.1)));
@@ -621,6 +677,22 @@ export class FlightSim {
       this.throttle = 0;
       this.emit("message", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
     }
+  }
+
+  /** Engines off in the parking orbit. Lower stages still attached are dropped. */
+  private enterParking(orbit: OrbitInfo) {
+    this.throttle = 0;
+    this.phase = "parking";
+    this.parkingState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
+    if (this.boosters?.attached) {
+      this.boosters.attached = false;
+      this.separate("boosters", "Booster separation");
+    }
+    if (this.stage1.attached) {
+      this.stage1.attached = false;
+      this.separate("stage1", "First stage separation");
+    }
+    this.emit("message", `Orbit reached: ${Math.round(orbit.periapsisAlt / 1000)} x ${Math.round(orbit.apoapsisAlt / 1000)} km`);
   }
 
   /** Propellant the service module must keep for course corrections. */
@@ -654,19 +726,67 @@ export class FlightSim {
   /* ------------------------------------------------------------- planning */
 
   /** Chooses when to start the TLI burn so the coast passes close to the Moon. */
-  private planTli() {
-    const start: CoastState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
-    const info = orbitInfo(start.r, start.v);
-    const period = isFinite(info.period) ? info.period : 5400;
-    // Delta-v the upper stage can still give (rocket equation).
+  /**
+   * Delta-v left for the trans-lunar injection (rocket equation): the upper stage,
+   * then the service module, which keeps a reserve for course corrections.
+   */
+  tliBudget(): { stage2Dv: number; serviceDv: number; available: number } {
     const ve = this.stage2.data.ispVac * G0;
     const stage2Dv = this.stage2.attached ? ve * Math.log(this.mass / (this.mass - this.stage2.prop)) : 0;
-    // The service module can finish the burn if needed, keeping a reserve for course corrections.
     const massAfterStage2 = this.mass - (this.stage2.attached ? this.stage2.data.dryKg + this.stage2.prop : 0);
     const serviceDv = this.serviceAttached && this.serviceProp > 0
       ? SERVICE_ENGINE.isp * G0 * Math.log(massAfterStage2 / (massAfterStage2 - this.serviceProp))
       : 0;
-    const available = stage2Dv + Math.max(0, serviceDv - SERVICE_RESERVE_DV);
+    return { stage2Dv, serviceDv, available: stage2Dv + Math.max(0, serviceDv - SERVICE_RESERVE_DV) };
+  }
+
+  /** Finite burn time for a TLI of `dv`: upper stage first, then the service module. */
+  tliBurnTime(dv: number): number {
+    const { stage2Dv } = this.tliBudget();
+    const ve = this.stage2.data.ispVac * G0;
+    const massAfterStage2 = this.mass - (this.stage2.attached ? this.stage2.data.dryKg + this.stage2.prop : 0);
+    const dv2 = Math.min(dv, stage2Dv);
+    const t2 = this.stage2.attached ? (this.mass * (1 - Math.exp(-dv2 / ve))) / (this.stage2.data.thrustVacN / ve) : 0;
+    const dvS = Math.max(0, dv - dv2);
+    const veS = SERVICE_ENGINE.isp * G0;
+    const tS = dvS > 0 ? (massAfterStage2 * (1 - Math.exp(-dvS / veS))) / (SERVICE_ENGINE.thrustN / veS) : 0;
+    return t2 + tS;
+  }
+
+  /** Seconds to keep clear before the burn point, so a burn centred on it can start in time. */
+  tliLead(): number {
+    return 60 + this.tliBurnTime(3300) / 2;
+  }
+
+  /** An independent copy of the simulation, to try a plan without touching this one. */
+  clone(): FlightSim {
+    const c = Object.create(FlightSim.prototype) as FlightSim;
+    return Object.assign(c, structuredClone({ ...this }));
+  }
+
+  /** Flies the player's plan: burn its delta-v where the Moon is the chosen angle ahead. */
+  private planTliFromPlan(plan: OrbitPlan) {
+    const start = this.parkingState ?? { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
+    const burn = findPhaseCrossing(start, plan.phaseDeg, this.tliLead());
+    const r = vlen(burn.r);
+    const speed = vlen(burn.v) + plan.tliDvMs;
+    this.tliStart = Math.max(this.t, burn.t - this.tliBurnTime(plan.tliDvMs) / 2);
+    this.tliEnergy = (speed * speed) / 2 - MU_EARTH / r;
+    this.emit(
+      "message",
+      `Your plan: trans-lunar injection in ${Math.round((this.tliStart - this.t) / 60)} min (${Math.round(plan.tliDvMs)} m/s)`,
+    );
+  }
+
+  private planTli() {
+    if (this.plan) {
+      this.planTliFromPlan(this.plan);
+      return;
+    }
+    const start: CoastState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
+    const info = orbitInfo(start.r, start.v);
+    const period = isFinite(info.period) ? info.period : 5400;
+    const { available } = this.tliBudget();
     // On an eccentric orbit the burn is far cheaper near perigee, so look over a few orbits.
     const orbits = info.eccentricity > 0.02 ? 4 : 1.05;
     const samples = Math.round(150 * Math.min(orbits, 2));
@@ -696,15 +816,8 @@ export class FlightSim {
       this.emit("message", "No trans-lunar injection possible: the upper stage does not have enough propellant left.");
       return;
     }
-    // Finite burn: start half the burn time before the impulsive point. If the upper stage
-    // can't do it all, add the time the service module needs for the rest.
-    const dv2 = Math.min(best.dv, stage2Dv);
-    const t2 = this.stage2.attached ? (this.mass * (1 - Math.exp(-dv2 / ve))) / (this.stage2.data.thrustVacN / ve) : 0;
-    const dvS = Math.max(0, best.dv - dv2);
-    const veS = SERVICE_ENGINE.isp * G0;
-    const tS = dvS > 0 ? (massAfterStage2 * (1 - Math.exp(-dvS / veS))) / (SERVICE_ENGINE.thrustN / veS) : 0;
-    const burnTime = t2 + tS;
-    this.tliStart = best.t - burnTime / 2;
+    // Finite burn: start half the burn time before the impulsive point.
+    this.tliStart = best.t - this.tliBurnTime(best.dv) / 2;
     this.tliEnergy = best.energy;
     this.emit("message", `Trans-lunar injection planned in ${Math.round((this.tliStart - this.t) / 60)} min (${Math.round(best.dv)} m/s, passing ${Math.round(best.miss / 1000)} km from the Moon)`);
   }
