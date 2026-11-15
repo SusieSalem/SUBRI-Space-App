@@ -172,12 +172,16 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       uMoonRel: { value: new THREE.Vector3() },
       uEarthAngle: { value: 0 },
       uTime: { value: 0 },
+      uRealTime: { value: 0 },
       uSunIntensity: { value: SUN_INTENSITY },
     }),
     [],
   );
   const skyDefines = useMemo(
-    () => (quality === "high" ? { VIEW_STEPS: 6, LIGHT_STEPS: 2 } : { VIEW_STEPS: 4, LIGHT_STEPS: 2 }),
+    () =>
+      quality === "high"
+        ? { VIEW_STEPS: 6, LIGHT_STEPS: 2, CLOUD_STEPS: 12, CLOUD_LIGHT: 2 }
+        : { VIEW_STEPS: 4, LIGHT_STEPS: 2, CLOUD_STEPS: 5, CLOUD_LIGHT: 1 },
     [quality],
   );
 
@@ -491,6 +495,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     u.uMoonRel.value.set(moon.x - camEci.x, moon.y - camEci.y, moon.z - camEci.z);
     u.uEarthAngle.value = earthAngle(t);
     u.uTime.value = t;
+    u.uRealTime.value = state.clock.elapsedTime;
     skyRef.current?.position.copy(camera.position);
 
     // Predicted path (KSP-style orbit line), refreshed a couple of times a second.
