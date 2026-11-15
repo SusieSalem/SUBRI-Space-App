@@ -30,6 +30,7 @@ import {
   sunDirectionAt,
   type Vec3,
 } from "../core/orbit";
+import { artemisPath } from "../core/artemis2";
 import { COUNTDOWN_S, FlightSim, MOUNT_HEIGHT, PAD_ECEF, PHASE_LABEL, type PieceId as SimPieceId } from "../core/simulate";
 import { playCountdownBeep, playLaunchRumbling } from "../audio/soundManager";
 import Astronaut from "./Astronaut";
@@ -66,6 +67,14 @@ export interface Telemetry {
   moonDistance: number;
   autopilot: boolean;
   maxG: number;
+  /** Lowest height above the Moon so far (m) and when (sim s). */
+  closestMoon: number;
+  closestMoonT: number;
+  /** Highest altitude above the Earth so far (m) and when (sim s). */
+  maxAltitude: number;
+  maxAltitudeT: number;
+  /** Entry interface (sim s), or Infinity. */
+  entryT: number;
   done: boolean;
   failed: boolean;
 }
@@ -205,6 +214,16 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color: "#8b96a8", transparent: true, opacity: 0.5 }));
     line.frustumCulled = false;
     return line;
+  }, []);
+
+  // NASA's real Artemis II path on the same mission clock as the player (src/core/artemis2.ts).
+  const artemis = useMemo(() => {
+    const pts = artemisPath(COUNTDOWN_S);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3 * pts.length), 3));
+    const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color: "#ffb347", transparent: true, opacity: 0.7 }));
+    line.frustumCulled = false;
+    return { line, pts };
   }, []);
 
   // New flight: reset debris, events, camera.
@@ -583,6 +602,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         marr.set([mp.x - anchor.current.x, mp.y - anchor.current.y, mp.z - anchor.current.z], i * 3);
       }
       moonLine.geometry.attributes.position.needsUpdate = true;
+      const aarr = artemis.line.geometry.attributes.position.array as Float32Array;
+      artemis.pts.forEach((p, i) => aarr.set([p.x - anchor.current.x, p.y - anchor.current.y, p.z - anchor.current.z], i * 3));
+      artemis.line.geometry.attributes.position.needsUpdate = true;
     }
     if (linesRef.current) {
       linesRef.current.quaternion.copy(qFrame);
@@ -612,6 +634,11 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         moonDistance: sim.moonDistance,
         autopilot: sim.autopilot,
         maxG: sim.maxG,
+        closestMoon: sim.closestMoon,
+        closestMoonT: sim.closestMoonT,
+        maxAltitude: sim.maxAltitude,
+        maxAltitudeT: sim.maxAltitudeT,
+        entryT: sim.entryT,
         done: sim.phase === "splashdown",
         failed: sim.phase === "failed",
       });
@@ -654,6 +681,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       <group ref={linesRef}>
         <primitive object={pathLine} />
         <primitive object={moonLine} />
+        <primitive object={artemis.line} />
       </group>
 
       <hemisphereLight ref={hemiRef} args={["#9ec4ff", "#4a4630", 0.55]} />

@@ -897,3 +897,36 @@ button.primary.big {
   font-size: 12px;
   border-radius: var(--glass-pill);
 }
+
+/* Artemis II comparison (NASA ephemeris) */
+.artemis-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--glass-radius-sm);
+  border: 1px solid rgba(255, 179, 71, 0.35);
+}
+.artemis-compare > .label {
+  color: #ffb347;
+}
+.artemis-compare table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+}
+.artemis-compare th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim, inherit);
+  padding-bottom: 2px;
+}
+.artemis-compare td {
+  padding: 2px 4px 2px 0;
+  vertical-align: top;
+}
+.artemis-compare a {
+  color: inherit;
+  text-decoration: underline;
+}
