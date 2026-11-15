@@ -180,6 +180,14 @@ export class FlightSim {
   private lastEcc = Infinity;
 
   maxG = 0;
+  /** Lowest height above the Moon's surface so far (m) and when (s), for the Artemis II comparison. */
+  closestMoon = Infinity;
+  closestMoonT = 0;
+  /** Highest altitude above the Earth so far (m) and when (s). */
+  maxAltitude = 0;
+  maxAltitudeT = 0;
+  /** When the capsule reached entry interface (s), or Infinity. */
+  entryT = Infinity;
   /** 0..1 re-entry heating, for the glow. */
   heat = 0;
   /** Engines producing thrust right now, for the exhaust. */
@@ -317,6 +325,21 @@ export class FlightSim {
         }
       }
       remaining -= dt;
+      this.trackExtremes();
+    }
+  }
+
+  private trackExtremes() {
+    if (this.onPad) return;
+    const dMoon = this.moonDistance;
+    if (dMoon < this.closestMoon) {
+      this.closestMoon = dMoon;
+      this.closestMoonT = this.t;
+    }
+    const alt = this.altitude;
+    if (alt > this.maxAltitude) {
+      this.maxAltitude = alt;
+      this.maxAltitudeT = this.t;
     }
   }
 
@@ -563,6 +586,7 @@ export class FlightSim {
         this.throttle = 0;
         if (this.altitude < ATMOSPHERE_TOP) {
           this.phase = "entry";
+          this.entryT = this.t;
           this.emit("message", "Entry interface");
         }
         break;

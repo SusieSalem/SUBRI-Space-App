@@ -100,6 +100,7 @@ npx gltf-transform optimize in.glb out.glb --texture-compress webp
 | Vulcan Centaur Overview | ULA | BE-4 first stage and Centaur V Dual-RL10C reference parameters (`crewed_lunar.json`) | [ulalaunch.com/rockets/vulcan-centaur](https://www.ulalaunch.com/rockets/vulcan-centaur) |
 | Planetary fact sheets | NASA NSSDCA | Earth and Moon radius, GM and rotation period used by the orbit formulas | [nssdc.gsfc.nasa.gov/planetary/factsheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html) |
 | LRO & LCROSS Polar Volatiles | NASA GSFC | Permanently Shadowed Region ice targets (`public/data/moon/`) | [science.nasa.gov/mission/lro](https://science.nasa.gov/mission/lro/) |
+| Artemis II ephemeris | NASA JSC flight dynamics | Orion's real path on Artemis II (April 2026), from upper-stage separation to entry interface. Drawn in orange in the map view on the player's mission clock, with a "You vs Artemis II" table in the flight HUD: closest approach to the Moon (6,539 km), farthest from Earth (406,773 km) and entry time (`artemis2_trajectory.json`) | [nasa.gov/missions/artemis-ii/track-nasas-artemis-ii-mission-in-real-time](https://www.nasa.gov/missions/artemis-ii/track-nasas-artemis-ii-mission-in-real-time/) |
 | Blue Marble / Black Marble | NASA Earth Observatory | Earth day and night imagery references for the globe | [earthobservatory.nasa.gov](https://earthobservatory.nasa.gov/) |
 
 ### Challenge resources
@@ -136,6 +137,12 @@ All JSON catalogs in `public/data/` are generated and validated using Python 3 s
 
 ```bash
 uv run data-prep/build_all_data.py
+```
+
+The Artemis II path is built from NASA's ephemeris file, kept in `data-prep/raw/`:
+
+```bash
+uv run data-prep/build_artemis2.py
 ```
 
 To optionally refresh the archived FIRMS or DONKI snapshots from live NASA endpoints (use your own free key from [api.nasa.gov](https://api.nasa.gov/); `DEMO_KEY` only allows 10 requests an hour and a DONKI refresh needs 5):

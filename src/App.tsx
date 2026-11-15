@@ -10,6 +10,18 @@ import {
 import { ROCKETS, ROCKETS_BY_ID, launchCheck, type RocketId } from "./core/launchCheck";
 import { DEFAULT_PLAN, type OrbitPlan } from "./core/orbitPlan";
 import { COUNTDOWN_S, FlightSim } from "./core/simulate";
+import { ARTEMIS2, artemisAltitudeAt } from "./core/artemis2";
+import {
+  DEFAULT_STORM_ID,
+  STORMS,
+  STORMS_BY_ID,
+  STORM_ONSET_S,
+  radiationScale,
+  stormLabel,
+  stormOutcome,
+  type StormResult,
+} from "./core/spaceWeather";
+import { playAlert } from "./audio/soundManager";
 import type { Quality, Telemetry, WarpControl } from "./scenes/FlightScene";
 
 // The 3D scene and the planner are the heavy parts: load them as separate
@@ -58,6 +70,14 @@ function formatDistance(m: number) {
   return `${Math.round(m)} m`;
 }
 
+/** Mission time as "4d 22h" (or "5h 10m" under a day). */
+function formatMissionTime(s: number) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`;
+}
+
 function formatSpeed(ms: number) {
   return Math.abs(ms) >= 1000 ? `${(ms / 1000).toFixed(2)} km/s` : `${Math.round(ms)} m/s`;
 }
@@ -98,6 +118,9 @@ export default function App() {
   const [tel, setTel] = useState<Telemetry | null>(null);
   const [warpSetting, setWarpSetting] = useState<number | "auto">("auto");
   const [paused, setPaused] = useState(false);
+  /** A real DONKI storm replayed during the flight, or "none" for a quiet Sun. */
+  const [stormId, setStormId] = useState<string>(DEFAULT_STORM_ID);
+  const [stormResult, setStormResult] = useState<StormResult | null>(null);
   const simRef = useRef<FlightSim>(new FlightSim(rocket, parts));
   const warp = useRef<WarpControl>({ setting: "auto", paused: false });
   const keys = useRef(new Set<string>());
@@ -112,6 +135,8 @@ export default function App() {
   const overBudget = totalCost > MISSION_REQUIREMENTS.budgetMUsd;
   const blockers = issues.filter((i) => i.severity === "blocker");
   const canLaunch = blockers.length === 0 && check.fits && !overBudget;
+  const storm = STORMS_BY_ID[stormId] ?? null;
+  const stormIsDangerous = !!storm && radiationScale(storm.protonFluxPfu) >= 2;
 
   // A fresh vehicle on the pad whenever the design changes before launch.
   useEffect(() => {
@@ -133,13 +158,23 @@ export default function App() {
     setPaused(false);
     setMapView(false);
     setTel(null);
+    setStormResult(null);
     setMode("flight");
   };
   const backTo = (m: Mode) => {
     setMode(m);
     setMapView(false);
     setTel(null);
+    setStormResult(null);
   };
+
+  // The storm reaches the spacecraft STORM_ONSET_S after liftoff, if the flight is still going.
+  useEffect(() => {
+    if (mode !== "flight" || !tel || !storm || stormResult) return;
+    if (tel.failed || tel.done || tel.t - COUNTDOWN_S < STORM_ONSET_S) return;
+    setStormResult(stormOutcome(storm, parts, tel.altitude));
+    playAlert("solar_storm");
+  }, [mode, tel, storm, stormResult, parts]);
 
   const stepWarp = useCallback(
     (dir: 1 | -1) => {
@@ -286,6 +321,33 @@ export default function App() {
                 );
               })}
             </div>
+            <h3>Space weather</h3>
+            <label className="storm-pick">
+              <span className="part-desc">A real solar storm from NASA's DONKI database hits on day 2 of the flight.</span>
+              <select value={stormId} onChange={(e) => setStormId(e.target.value)}>
+                {STORMS.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {stormLabel(s)}
+                  </option>
+                ))}
+                <option value="none">Quiet Sun (no storm)</option>
+              </select>
+              {storm && (
+                <span className="small">
+                  <span className={stormIsDangerous && !parts.includes("radiationShield") ? "bad" : "muted"}>
+                    {storm.title}.{" "}
+                    {stormIsDangerous
+                      ? parts.includes("radiationShield")
+                        ? "Dangerous proton flux; the storm shelter will protect the crew."
+                        : "Dangerous proton flux and no storm shelter on board."
+                      : "Little or no proton radiation."}
+                  </span>{" "}
+                  <a href={storm.sourceUrl} target="_blank" rel="noreferrer">
+                    DONKI record
+                  </a>
+                </span>
+              )}
+            </label>
           </aside>
 
           <aside className="panel right assembly">
@@ -406,6 +468,26 @@ export default function App() {
               <Bar label={`Fuel / ${tel.fuelName}`} fill={tel.fuel} />
               <Bar label="Throttle" fill={tel.throttle} />
             </div>
+            {storm && !stormResult && !tel.done && !tel.failed && (
+              <span className="small muted">
+                Space weather: a real storm ({storm.startTimeUtc.slice(0, 10)}) arrives at T+2d.
+              </span>
+            )}
+            {stormResult && (
+              <div className={`storm-alert ${stormResult.severity}`}>
+                <span className="storm-head">{stormResult.headline}</span>
+                <span className="small">{stormResult.explanation}</span>
+                <a className="small" href={stormResult.storm.sourceUrl} target="_blank" rel="noreferrer">
+                  Open the DONKI record
+                </a>
+                {tel.done && stormResult.outcome === "exposed" && (
+                  <span className="small bad">
+                    The capsule is home, but the crew's radiation dose makes this a failed mission.
+                  </span>
+                )}
+              </div>
+            )}
+            <ArtemisComparison tel={tel} />
             <span className={`small ${tel.autopilot ? "ok" : "warn"}`}>
               {tel.autopilot ? "Autopilot flying (press T or WASD to take over)" : "Manual control (press T for autopilot)"}
             </span>
@@ -457,6 +539,66 @@ export default function App() {
           </footer>
         </>
       )}
+    </div>
+  );
+}
+
+/** The player's flight next to NASA's real Artemis II, on the same mission clock. */
+function ArtemisComparison({ tel }: { tel: Telemetry }) {
+  const missionT = tel.t - COUNTDOWN_S;
+  const artemisAlt = artemisAltitudeAt(missionT);
+  // The closest approach is known once the spacecraft has been moving away from the Moon for an hour.
+  const flybyDone = isFinite(tel.closestMoon) && tel.t - tel.closestMoonT > 3600 && tel.moonDistance > tel.closestMoon;
+  const km = (m: number) => `${fmt.format(Math.round(m / 1000))} km`;
+  const rows: { label: string; you: string; artemis: string }[] = [
+    {
+      label: "Closest to the Moon",
+      you: flybyDone ? `${km(tel.closestMoon)}, T+${formatMissionTime(tel.closestMoonT - COUNTDOWN_S)}` : "-",
+      artemis: `${fmt.format(ARTEMIS2.closestMoonAltitudeKm)} km, T+${formatMissionTime(ARTEMIS2.closestMoonMissionTimeS)}`,
+    },
+    {
+      label: "Farthest from Earth",
+      you: flybyDone ? km(tel.maxAltitude) : "-",
+      artemis: `${fmt.format(ARTEMIS2.maxEarthAltitudeKm)} km`,
+    },
+    {
+      label: "Entry interface",
+      you: isFinite(tel.entryT) ? `T+${formatMissionTime(tel.entryT - COUNTDOWN_S)}` : "-",
+      artemis: `T+${formatMissionTime(ARTEMIS2.entryInterfaceMissionTimeS)}`,
+    },
+  ];
+  return (
+    <div className="artemis-compare">
+      <span className="label">You vs NASA's Artemis II (real flight, April 2026)</span>
+      {artemisAlt !== null && !tel.done && (
+        <span className="small">
+          At T+{formatMissionTime(missionT)} Artemis II was {km(artemisAlt)} from Earth; you are {km(tel.altitude)}.
+        </span>
+      )}
+      <table className="small mono">
+        <thead>
+          <tr>
+            <th />
+            <th>You</th>
+            <th>Artemis II</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label}>
+              <td>{r.label}</td>
+              <td>{r.you}</td>
+              <td>{r.artemis}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <span className="small muted">
+        Orange line in the map (M): Artemis II's path, drawn round the game's Moon on your clock.{" "}
+        <a href={ARTEMIS2.sourceUrl} target="_blank" rel="noreferrer">
+          NASA ephemeris
+        </a>
+      </span>
     </div>
   );
 }

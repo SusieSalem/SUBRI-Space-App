@@ -1311,3 +1311,89 @@ button.suggest {
   letter-spacing: 0.04em;
   pointer-events: none;
 }
+
+/* Artemis II comparison (NASA ephemeris) */
+.artemis-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--glass-radius-sm);
+  border: 1px solid rgba(255, 179, 71, 0.35);
+}
+.artemis-compare > .label {
+  color: #ffb347;
+}
+.artemis-compare table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10.5px;
+}
+.artemis-compare th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim, inherit);
+  padding: 0 4px 2px 0;
+}
+.artemis-compare td {
+  padding: 2px 4px 2px 0;
+  vertical-align: top;
+}
+.artemis-compare a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+/* Space weather (NASA DONKI storms) */
+.storm-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.storm-pick select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--glass-bg-hi);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius-sm);
+  padding: 6px 8px;
+}
+.storm-pick option {
+  color: #000;
+}
+.storm-pick a,
+.storm-alert a {
+  color: inherit;
+  text-decoration: underline;
+}
+.storm-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid currentColor;
+  border-left-width: 3px;
+  border-radius: var(--glass-radius-sm);
+  background: rgba(0, 0, 0, 0.25);
+}
+.storm-alert .storm-head {
+  font-weight: 600;
+  font-size: 13px;
+}
+.storm-alert .small {
+  color: var(--text);
+}
+.storm-alert.ok {
+  color: var(--ok);
+}
+.storm-alert.warn {
+  color: var(--warn);
+}
+.storm-alert.bad {
+  color: var(--bad);
+}
+.storm-alert .small.bad {
+  color: var(--bad);
+}
