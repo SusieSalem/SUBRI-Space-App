@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import OrbitPlanner from "./components/OrbitPlanner";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MISSION_REQUIREMENTS,
   PARTS,
@@ -11,7 +10,12 @@ import {
 import { ROCKETS, ROCKETS_BY_ID, launchCheck, type RocketId } from "./core/launchCheck";
 import { DEFAULT_PLAN, type OrbitPlan } from "./core/orbitPlan";
 import { COUNTDOWN_S, FlightSim } from "./core/simulate";
-import FlightScene, { type Quality, type Telemetry, type WarpControl } from "./scenes/FlightScene";
+import type { Quality, Telemetry, WarpControl } from "./scenes/FlightScene";
+
+// The 3D scene and the planner are the heavy parts: load them as separate
+// chunks so the interface shows up while three.js is still downloading.
+const FlightScene = lazy(() => import("./scenes/FlightScene"));
+const OrbitPlanner = lazy(() => import("./components/OrbitPlanner"));
 
 /** Step 1 is assembly on the pad, step 2 plans the trip to the Moon, step 3 flies it, all in the same world. */
 type Mode = "assembly" | "planning" | "flight";
@@ -212,22 +216,24 @@ export default function App() {
 
   return (
     <div className={`app mode-${mode}`}>
-      <FlightScene
-        version={simVersion}
-        simRef={simRef}
-        rocket={rocket}
-        parts={parts}
-        flying={mode === "flight"}
-        warp={warp}
-        keys={keys}
-        mapView={mapView}
-        quality={quality}
-        launchDate={launchDate}
-        timeOfDay={timeOfDay}
-        syncCycle={syncCycle}
-        lookAt={lookAt}
-        onTelemetry={onTelemetry}
-      />
+      <Suspense fallback={<div className="scene-loading">Loading 3D scene…</div>}>
+        <FlightScene
+          version={simVersion}
+          simRef={simRef}
+          rocket={rocket}
+          parts={parts}
+          flying={mode === "flight"}
+          warp={warp}
+          keys={keys}
+          mapView={mapView}
+          quality={quality}
+          launchDate={launchDate}
+          timeOfDay={timeOfDay}
+          syncCycle={syncCycle}
+          lookAt={lookAt}
+          onTelemetry={onTelemetry}
+        />
+      </Suspense>
 
       <header className="topbar">
         <div className="brand">
@@ -359,7 +365,9 @@ export default function App() {
 
       {mode === "planning" && (
         <>
-          <OrbitPlanner rocket={rocket} parts={parts} plan={plan} onChange={setPlan} />
+          <Suspense fallback={<div className="scene-loading">Loading planner…</div>}>
+            <OrbitPlanner rocket={rocket} parts={parts} plan={plan} onChange={setPlan} />
+          </Suspense>
           <footer className="controls">
             <div className="buttons">
               <button onClick={() => backTo("assembly")}>Back to assembly</button>

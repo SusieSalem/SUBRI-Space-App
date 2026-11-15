@@ -1089,6 +1089,16 @@ button.suggest {
   stroke: var(--ok);
   filter: drop-shadow(0 0 3px rgba(74, 222, 128, 0.45));
 }
+.trip.back.faded {
+  opacity: 0.35;
+  filter: none;
+}
+/* The way home as flown, automatic course corrections included. */
+.trip.flown {
+  stroke: var(--ok);
+  stroke-dasharray: 6 5;
+  filter: drop-shadow(0 0 3px rgba(74, 222, 128, 0.45));
+}
 .trip-map .tick {
   fill: #fff;
 }
@@ -1193,6 +1203,9 @@ button.suggest {
 .map-legend .sw.back {
   background: var(--ok);
 }
+.map-legend .sw.flown {
+  background: repeating-linear-gradient(90deg, var(--ok) 0 4px, transparent 4px 7px);
+}
 .map-legend .sw.node {
   width: 8px;
   height: 8px;
@@ -1285,4 +1298,16 @@ button.suggest {
 }
 .mode-planning .topbar {
   z-index: 1;
+}
+
+/* Shown while the 3D scene or the planner chunk is still downloading. */
+.scene-loading {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted, #9aa4b2);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  pointer-events: none;
 }
