@@ -104,6 +104,20 @@ export const PHASE_LABEL: Record<FlightPhase, string> = {
   failed: "Mission lost",
 };
 
+/** Why a flight ended early, for the mission report. */
+export type FailureCode = "ascent-propellant" | "ground-impact" | "life-support";
+
+export interface FlightFailure {
+  code: FailureCode;
+  /** Phase the vehicle was in when it was lost. */
+  phase: FlightPhase;
+  /** Mission time (s). */
+  t: number;
+  text: string;
+  /** Speed at impact (m/s), for ground-impact. */
+  speed?: number;
+}
+
 export interface FlightEvent {
   type: "separation" | "message";
   piece?: PieceId;
@@ -180,6 +194,16 @@ export class FlightSim {
   private lastEcc = Infinity;
 
   maxG = 0;
+  /** Highest load factor during re-entry (g). */
+  entryMaxG = 0;
+  /** Mission time of liftoff (s), Infinity on the pad. */
+  liftoffT = Infinity;
+  /** Days of oxygen, water and CO2 scrubbing the crew has on board. */
+  readonly lifeSupportDays: number;
+  /** Service module delta-v still unused when it was dropped before re-entry (m/s). */
+  serviceDvAtSeparation = NaN;
+  /** Set when the flight ends early: what happened, where and when. */
+  failure: FlightFailure | null = null;
   /** Lowest height above the Moon's surface so far (m) and when (s), for the Artemis II comparison. */
   closestMoon = Infinity;
   closestMoonT = 0;
@@ -216,6 +240,7 @@ export class FlightSim {
     this.capsuleKg = this.hasCapsule ? PARTS_BY_ID.capsule.massKg : 0;
     this.spacecraftDryKg = total - this.serviceProp;
     this.escapeTower = this.hasCapsule;
+    this.lifeSupportDays = parts.reduce((s, id) => s + PARTS_BY_ID[id].oxygenDays, 0);
 
     this.r = ecefToEci({ x: PAD_ECEF.x, y: PAD_ECEF.y + MOUNT_HEIGHT, z: PAD_ECEF.z }, 0);
     this.v = airVelocity(this.r);
@@ -327,7 +352,42 @@ export class FlightSim {
       }
       remaining -= dt;
       this.trackExtremes();
+      this.checkLifeSupport();
     }
+  }
+
+  /** Days since liftoff (0 on the pad). */
+  get missionDays(): number {
+    return isFinite(this.liftoffT) ? (this.t - this.liftoffT) / 86400 : 0;
+  }
+
+  /** Days of life support left (negative once it has run out). */
+  get lifeSupportLeftDays(): number {
+    return this.lifeSupportDays - this.missionDays;
+  }
+
+  /** Delta-v the service module can still give (m/s). */
+  get serviceDvLeft(): number {
+    if (!this.serviceAttached || this.serviceProp <= 0) return 0;
+    const m = this.spacecraftDryKg + this.serviceProp;
+    return SERVICE_ENGINE.isp * G0 * Math.log(m / this.spacecraftDryKg);
+  }
+
+  /** The crew can only live as long as the oxygen, water and CO2 scrubbers last. */
+  private checkLifeSupport() {
+    if (this.phase === "splashdown" || this.phase === "failed" || !isFinite(this.liftoffT)) return;
+    if (this.missionDays < this.lifeSupportDays) return;
+    this.fail(
+      "life-support",
+      `Life support ran out on day ${this.missionDays.toFixed(1)}: the crew had oxygen for ${this.lifeSupportDays} days.`,
+    );
+  }
+
+  private fail(code: FailureCode, text: string, speed?: number) {
+    this.failure = { code, phase: this.phase, t: this.t, text, speed };
+    this.phase = "failed";
+    this.throttle = 0;
+    this.emit("message", text);
   }
 
   private trackExtremes() {
@@ -447,6 +507,7 @@ export class FlightSim {
     // Load factor felt by the crew (non-gravitational acceleration).
     const felt = vlen(vsub(acc, g)) / G0;
     if (!this.onPad) this.maxG = Math.max(this.maxG, felt);
+    if (isFinite(this.entryT)) this.entryMaxG = Math.max(this.entryMaxG, felt);
 
     if (this.onPad) {
       // Held down on the pad until the engines are up and the clamps let go.
@@ -457,6 +518,7 @@ export class FlightSim {
       const weight = m * vlen(g);
       if (this.t >= COUNTDOWN_S && thrust > weight * 1.05) {
         this.onPad = false;
+        this.liftoffT = this.t;
         this.phase = "ascent";
         this.emit("message", "Liftoff");
       }
@@ -487,9 +549,7 @@ export class FlightSim {
         this.throttle = 0;
         this.emit("message", "Splashdown. The crew is home.");
       } else {
-        this.phase = "failed";
-        this.throttle = 0;
-        this.emit("message", `Vehicle lost: hit the ground at ${Math.round(sp)} m/s.`);
+        this.fail("ground-impact", `Vehicle lost: hit the ground at ${Math.round(sp)} m/s.`, sp);
       }
     }
   }
@@ -630,6 +690,7 @@ export class FlightSim {
     if (this.flybyPassed && this.altitude < 6000000 && this.verticalSpeed < 0) {
       this.phase = "return";
       if (this.serviceAttached) {
+        this.serviceDvAtSeparation = this.serviceDvLeft;
         this.serviceAttached = false;
         this.separate("serviceModule", "Service module separation. Capsule on its own for re-entry.");
       }
@@ -687,9 +748,7 @@ export class FlightSim {
       const sUp = Math.max(-0.5, Math.min(0.85, (gEff + (vvWanted - vv) / 10) / acc));
       this.attitude = vnorm(vadd(vscale(up, sUp), vscale(hdir, Math.sqrt(1 - sUp * sUp))));
       if (!this.stage1.attached && this.stage2.prop <= 0) {
-        this.phase = "failed";
-        this.throttle = 0;
-        this.emit("message", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
+        this.fail("ascent-propellant", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
       }
       return;
     }
@@ -717,9 +776,7 @@ export class FlightSim {
     }
 
     if (!this.stage1.attached && this.stage2.prop <= 0) {
-      this.phase = "failed";
-      this.throttle = 0;
-      this.emit("message", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
+      this.fail("ascent-propellant", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
     }
   }
 

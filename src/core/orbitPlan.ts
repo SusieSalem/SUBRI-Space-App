@@ -33,7 +33,7 @@ import {
   type CoastState,
   type Vec3,
 } from "./orbit";
-import { FlightSim, PARKING_ALT, SERVICE_RESERVE_DV } from "./simulate";
+import { FlightSim, PARKING_ALT, SERVICE_RESERVE_DV, type FlightFailure } from "./simulate";
 
 export interface OrbitPlan {
   /** Target height of the circular parking orbit (m). */
@@ -134,6 +134,8 @@ export interface FlownTrip {
   /** Number of correction burns. */
   corrections: number;
   outcome: "splashdown" | "failed" | "lost";
+  /** Why the flight was lost, when outcome is "failed". */
+  failure: FlightFailure | null;
   /** Days from the burn to the end of the trip. */
   days: number;
   periluneAlt: number;
@@ -266,6 +268,7 @@ function flyOn(sim: FlightSim, mapStart: number): FlownTrip {
     corrections: tcms.length,
     correctionDv: sim.tcmUsed,
     outcome: sim.phase === "splashdown" ? "splashdown" : sim.phase === "failed" ? "failed" : "lost",
+    failure: sim.failure,
     days: (sim.t - mapStart) / 86400,
     periluneAlt: perilune - R_MOON,
   };
@@ -455,14 +458,16 @@ export function evaluatePlan(
       title: "Home with corrections",
       detail: `On its own the way home misses, but the autopilot's course corrections (${Math.round(flown.correctionDv)} m/s) bring the crew back on day ${flown.days.toFixed(1)}.`,
     };
-  } else if (flown && flown.outcome !== "splashdown" && home.state !== "bad") {
+  } else if (flown && flown.outcome !== "splashdown" && (home.state !== "bad" || flown.failure?.code === "life-support")) {
     home = {
       state: "bad",
       title: "Doesn't make it home",
       detail:
-        flown.outcome === "failed"
-          ? "Even with the automatic course corrections the re-entry fails. Fine-tune the burn angle."
-          : `The course corrections run out after ${Math.round(flown.correctionDv)} m/s and the crew isn't home after 14 days. Fine-tune the burn angle.`,
+        flown.failure?.code === "life-support"
+          ? `The trip takes too long: ${flown.failure.text} Pick a faster trajectory or carry more life support.`
+          : flown.outcome === "failed"
+            ? "Even with the automatic course corrections the re-entry fails. Fine-tune the burn angle."
+            : `The course corrections run out after ${Math.round(flown.correctionDv)} m/s and the crew isn't home after 14 days. Fine-tune the burn angle.`,
     };
   }
 
