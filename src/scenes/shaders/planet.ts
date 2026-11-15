@@ -30,7 +30,7 @@ void main() {
 }
 `;
 
-export const planetFragment = /* glsl */ `
+const planetHeaderAndClouds = /* glsl */ `
 ${fragmentHead}
 uniform mat3 uWorldToEci;
 uniform vec3 uSunDir;       // ECI
@@ -44,6 +44,7 @@ uniform float uEarthAngle;  // Earth rotation angle, radians
 uniform float uTime;      // mission time (clouds drift with time warp)
 uniform float uRealTime;  // wall-clock time (waves keep moving on the pad)
 uniform float uSunIntensity;
+uniform float uWeather;   // 0 = clear, 1 = cloudy, 2 = rain, 3 = storm
 uniform sampler2D uEarthDay;   // NASA Blue Marble 2K equirectangular daylight texture
 uniform sampler2D uEarthNight; // NASA Black Marble 2K equirectangular nighttime city lights
 uniform sampler2D uEarthSpec;  // NASA Earth 2K land/water specular mask
@@ -244,7 +245,8 @@ float weatherCover(vec3 nf, float padDist) {
   vec3 q = nf * 5.0 + vec3(uTime * 0.00002, 0.0, 0.0);
   float c = fbm(q + fbm(q * 2.0 + 3.1, 3) * 1.2, 4);
   float cover = smoothstep(0.42, 0.68, c);
-  return mix(cover, 0.33, 1.0 - smoothstep(20000.0, 140000.0, padDist));
+  float padTarget = uWeather < 0.5 ? 0.06 : (uWeather < 1.5 ? 0.34 : (uWeather < 2.5 ? 0.64 : 0.74));
+  return mix(cover, padTarget, 1.0 - smoothstep(20000.0, 140000.0, padDist));
 }
 
 // Cloud density at an Earth-fixed point pk (km) and height h (m).
@@ -256,7 +258,161 @@ float cloudDensity(vec3 pk, float h, float cover) {
   float d = shape * profile - (1.0 - cover) * 0.72;
   if (d <= 0.0) return 0.0;
   d -= (fbm(q * 2.4 + 7.0, 2) - 0.5) * 0.1;
-  return clamp(d * 3.5, 0.0, 1.0);
+  float densMult = uWeather > 2.5 ? 4.6 : (uWeather > 1.5 ? 4.0 : 3.5);
+  return clamp(d * densMult, 0.0, 1.0);
+}
+
+// ---------------- 1D Perlin FBM & Volumetric Lightning (Storm Mode) ----------------
+const vec3 BOLT_COLOUR = vec3(0.3, 0.6, 1.0);
+
+float hash11(float p) {
+  vec3 p3 = fract(vec3(p) * 0.1031);
+  p3 += dot(p3, p3.yzx + 19.19);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+float fade1D(float t) {
+  return t * t * t * (t * (6.0 * t - 15.0) + 10.0);
+}
+
+float grad1D(float h, float p) {
+  return mod(floor(1e4 * h), 2.0) < 1.0 ? p : -p;
+}
+
+float perlinNoise1D(float p) {
+  float pi = floor(p);
+  float pf = p - pi;
+  float w = fade1D(pf);
+  return mix(grad1D(hash11(pi), pf), grad1D(hash11(pi + 1.0), pf - 1.0), w) * 2.0;
+}
+
+float fbm1D(float pos) {
+  if (pos < 0.0) return 0.0;
+  float total = 0.0;
+  float frequency = 0.2;
+  float amplitude = 1.0;
+  for (int i = 0; i < 4; i++) {
+    if (i > 2) pos += 0.5 * uRealTime;
+    total += perlinNoise1D(pos * frequency) * amplitude;
+    amplitude *= 0.5;
+    frequency *= 2.0;
+  }
+  return total;
+}
+
+float getGlow(float dist, float radius, float intensity) {
+  dist = max(dist, 1e-5);
+  return pow(radius / dist, intensity);
+}
+
+// Compute active state and horizontal pad offset (East, North in metres) for lightning bolt slot idx (0..2)
+bool getBoltInfo(
+  int idx,
+  out vec2 boltXZ,
+  out float progress,
+  out float boltRadius,
+  out float boltIntensity,
+  out float tSeries
+) {
+  float fi = float(idx);
+  float speed = 1.35;
+  float shift = fract((fi + 1.0) * 0.3333);
+  float time = uRealTime * speed + shift;
+  tSeries = floor(time) + 1.0;
+
+  // Strike probability across the 3 staggered bolt slots
+  if (hash11(fi + tSeries * 0.026) > 0.44) {
+    boltXZ = vec2(1e10);
+    progress = 0.0;
+    boltRadius = 0.01;
+    boltIntensity = 0.0;
+    return false;
+  }
+
+  // Pick a strike location around the launch site (1.5 km to 4.8 km away) inside a dense cloud cell
+  vec2 bestLoc = vec2(2000.0, 1200.0);
+  float bestShape = -1.0;
+  for (int c = 0; c < 3; c++) {
+    float seed = tSeries * 1.17 + fi * 7.3 + float(c) * 19.1;
+    float ang = hash11(seed + 0.43) * 6.283185;
+    float rad = mix(1500.0, 4800.0, hash11(seed + 0.31));
+    vec2 candXZ = vec2(cos(ang), sin(ang)) * rad;
+    vec3 nCand = normalize(vec3(0.0, R + 2100.0, 0.0) + uPadEast * candXZ.x + uPadNorth * candXZ.y);
+    vec3 pkCand = toEcef(nCand) * ((R + 2100.0) / 1000.0);
+    vec3 qCand = pkCand + vec3(uTime * 0.008, 0.0, uTime * 0.003);
+    float sh = fbm(qCand * 0.38, 3);
+    if (sh > bestShape) {
+      bestShape = sh;
+      bestLoc = candXZ;
+    }
+  }
+  boltXZ = bestLoc;
+
+  float descentDuration = 0.48;
+  float ft = fract(time);
+  progress = clamp(ft / descentDuration, 0.0, 1.0);
+
+  // Briefly thicken & brighten the bolt the moment it makes contact with the ground/sea
+  if (progress > 0.95 && ft - descentDuration < 0.12) {
+    boltRadius = 0.026;
+    boltIntensity = 2.4;
+  } else {
+    boltRadius = 0.011;
+    boltIntensity = 1.0 - smoothstep(descentDuration + 0.10, 0.92, ft);
+  }
+  return boltIntensity > 0.01;
+}
+
+// Analytical cloud-to-ground lightning bolt glow below the cloud base (CB)
+vec3 sampleLightningBolts(vec3 d, float h0, float mu, float tMax, out float minBoltT) {
+  minBoltT = 1e10;
+  if (uWeather < 2.5 || h0 > 35000.0) return vec3(0.0);
+
+  vec2 roXZ = vec2(dot(uCamFromPad, uPadEast), dot(uCamFromPad, uPadNorth));
+  vec2 rdXZ = vec2(dot(d, uPadEast), dot(d, uPadNorth));
+  float rd2 = max(dot(rdXZ, rdXZ), 1e-5);
+  vec3 glow = vec3(0.0);
+
+  for (int i = 0; i < 3; i++) {
+    vec2 boltXZ;
+    float progress;
+    float boltRadius;
+    float boltIntensity;
+    float tSeries;
+    if (!getBoltInfo(i, boltXZ, progress, boltRadius, boltIntensity, tSeries)) continue;
+
+    float tHit = clamp(dot(boltXZ - roXZ, rdXZ) / rd2, 0.0, tMax);
+    float yHit = heightAt(h0, mu, tHit);
+    float yTop = CB + 140.0;
+    float yBot = yTop * (1.0 - progress);
+    float yClamped = clamp(yHit, yBot, yTop);
+
+    // 1D Perlin FBM jagging along the descending bolt
+    float shapeOffset = 15.2 * exp2(float(i));
+    float yInput = max(0.0, (yTop - yClamped) * 0.014);
+    vec2 jag = vec2(
+      fbm1D(shapeOffset + tSeries * 0.2 + yInput),
+      fbm1D(shapeOffset + tSeries * 0.12 - yInput)
+    ) * 85.0;
+
+    vec2 warpedXZ = boltXZ + jag;
+    float tRef = clamp(dot(warpedXZ - roXZ, rdXZ) / rd2, 0.0, tMax);
+    float yRay = heightAt(h0, mu, tRef);
+    vec2 rayXZ = roXZ + rdXZ * tRef;
+
+    float dxz = length(rayXZ - warpedXZ);
+    float dy = max(max(yBot - yRay, yRay - yTop), 0.0);
+    float distKm = length(vec2(dxz, dy)) / 1000.0;
+    if (distKm >= 0.42) continue;
+
+    // Smooth finite-range falloff so lightning glow never flashes the entire sky or clips at tMax
+    float rangeFade = 1.0 - smoothstep(0.14, 0.42, distKm);
+    minBoltT = min(minBoltT, tRef);
+    float g = getGlow(distKm, boltRadius, 0.90) * rangeFade;
+    float core = exp(-distKm / max(boltRadius * 0.45, 1e-4)) * 2.5 * rangeFade;
+    glow += (BOLT_COLOUR * g + vec3(0.85, 0.94, 1.0) * core) * boltIntensity * uSunIntensity * 0.85;
+  }
+  return glow;
 }
 
 float hg(float g, float c) {
@@ -287,8 +443,9 @@ vec2 cloudSegment(float h0, float mu, float tLimit) {
   return vec2(s, e);
 }
 
-// Ray-marched cumulus with dual-octave multi-scattering & Beer-Powder.
-vec4 marchClouds(vec3 up, float h0, float mu, vec3 d, vec3 L, vec2 seg, float transitFactor) {
+// Ray-marched cumulus with dual-octave multi-scattering, Beer-Powder & internal storm lightning.
+vec4 marchClouds(vec3 up, float h0, float mu, vec3 d, vec3 L, vec2 seg, float transitFactor, out float closestCloudT) {
+  closestCloudT = 1e10;
   float span = seg.y - seg.x;
   float tMid = seg.x + span * 0.3;
   vec3 nMid = normalize(up * (R + h0) + d * tMid);
@@ -296,13 +453,39 @@ vec4 marchClouds(vec3 up, float h0, float mu, vec3 d, vec3 L, vec2 seg, float tr
   if (cover < 0.04) return vec4(0.0, 0.0, 0.0, 1.0);
 
   float muS = dot(nMid, L);
-  vec3 sunCol = uSunIntensity * transitFactor * extinction(sunDepth(2500.0, muS)) * step(-0.08, muS);
-  vec3 ambient = uSunIntensity * transitFactor * vec3(0.04, 0.065, 0.105) * (0.015 + 0.985 * smoothstep(-0.14, 0.3, muS));
+  float stormDim = uWeather > 2.5 ? 0.42 : (uWeather > 1.5 ? 0.65 : 1.0);
+  vec3 sunCol = uSunIntensity * transitFactor * stormDim * extinction(sunDepth(2500.0, muS)) * step(-0.08, muS);
+  vec3 ambient = uSunIntensity * transitFactor * stormDim * vec3(0.04, 0.065, 0.105) * (0.015 + 0.985 * smoothstep(-0.14, 0.3, muS));
   float cosT = dot(d, L);
   float phase = mix(hg(0.72, cosT), hg(-0.28, cosT), 0.32) * 2.8;
   float phaseMulti = mix(hg(0.35, cosT), 1.0 / (4.0 * PI), 0.5) * 1.6;
   vec3 Lf = toEcef(L);
   float jitter = hash13(vec3(gl_FragCoord.xy, 3.7));
+
+  // Precompute storm internal sheet-lightning & bolt exit positions once per pixel
+  vec2 b0 = vec2(1e10), b1 = vec2(1e10), b2 = vec2(1e10);
+  float act0 = 0.0, act1 = 0.0, act2 = 0.0;
+  vec2 intXZ = vec2(1e10);
+  float intH = 2600.0;
+  float intSize = 0.0;
+  float intActive = 0.0;
+  if (uWeather > 2.5 && h0 < 35000.0) {
+    float pDummy, rDummy, tsDummy;
+    getBoltInfo(0, b0, pDummy, rDummy, act0, tsDummy);
+    getBoltInfo(1, b1, pDummy, rDummy, act1, tsDummy);
+    getBoltInfo(2, b2, pDummy, rDummy, act2, tsDummy);
+
+    // Internal sheet lightning flickering inside the cloud core
+    float intTick = floor(uRealTime * 3.8);
+    if (hash11(intTick * 0.73 + 1.19) < 0.65) {
+      float ang = hash11(intTick + 0.17) * 6.283185;
+      float rad = mix(1200.0, 4400.0, hash11(intTick + 0.53));
+      intXZ = vec2(cos(ang), sin(ang)) * rad;
+      intH = CB + (CT - CB) * (0.35 + 0.35 * hash11(intTick + 0.81));
+      intSize = (0.42 + 0.16 * sin(45.0 * fract(uRealTime)));
+      intActive = sin(fract(uRealTime * 3.8) * 3.14159);
+    }
+  }
 
   float T = 1.0;
   vec3 acc = vec3(0.0);
@@ -315,6 +498,7 @@ vec4 marchClouds(vec3 up, float h0, float mu, vec3 d, vec3 L, vec2 seg, float tr
     vec3 pk = toEcef(n) * ((R + h) / 1000.0);
     float dens = cloudDensity(pk, h, cover);
     if (dens <= 0.0) continue;
+    closestCloudT = min(closestCloudT, t);
     float odL = 0.0;
     #if CLOUD_LIGHT > 0
     for (int j = 0; j < CLOUD_LIGHT; j++) {
@@ -330,7 +514,33 @@ vec4 marchClouds(vec3 up, float h0, float mu, vec3 d, vec3 L, vec2 seg, float tr
     float powder = 1.0 - exp(-dens * sigma * 420.0);
     float hf = clamp((h - CB) / (CT - CB), 0.0, 1.0);
     vec3 directLight = sunCol * (Tl1 * phase + Tl2 * phaseMulti) * (0.32 + 0.68 * powder);
-    vec3 S = directLight + ambient * (0.50 + 0.50 * hf);
+
+    // Internal cloud lightning flash + exit glow at bottom of cloud where bolts emerge
+    vec3 internalLight = vec3(0.0);
+    if (uWeather > 2.5 && h0 < 35000.0) {
+      vec3 fromPadS = uCamFromPad + d * t;
+      vec2 sampleXZ = vec2(dot(fromPadS, uPadEast), dot(fromPadS, uPadNorth));
+      if (intActive > 0.01) {
+        float prox = length(vec3((sampleXZ - intXZ) / 1000.0, (h - intH) / 700.0));
+        internalLight += getGlow(prox, intSize, 2.6) * BOLT_COLOUR * intActive;
+      }
+      float hExit = CB * 1.05;
+      if (act0 > 0.01) {
+        float p0 = length(vec3((sampleXZ - b0) / 1000.0, (h - hExit) / 650.0));
+        internalLight += getGlow(p0, 0.38, 2.2) * BOLT_COLOUR * act0 * 1.3;
+      }
+      if (act1 > 0.01) {
+        float p1 = length(vec3((sampleXZ - b1) / 1000.0, (h - hExit) / 650.0));
+        internalLight += getGlow(p1, 0.38, 2.2) * BOLT_COLOUR * act1 * 1.3;
+      }
+      if (act2 > 0.01) {
+        float p2 = length(vec3((sampleXZ - b2) / 1000.0, (h - hExit) / 650.0));
+        internalLight += getGlow(p2, 0.38, 2.2) * BOLT_COLOUR * act2 * 1.3;
+      }
+      internalLight *= uSunIntensity * 1.4;
+    }
+
+    vec3 S = directLight + ambient * (0.50 + 0.50 * hf) + internalLight;
     float stepT = exp(-dens * sigma * ds);
     acc += T * S * (1.0 - stepT);
     T *= stepT;
@@ -368,6 +578,10 @@ vec4 sampleCirrus(vec3 up, float h0, float mu, vec3 d, vec3 L, float tLimit, flo
   vec3 col = (sunCol * phase * (1.0 - 0.35 * dens) + amb) * alpha;
   return vec4(col, 1.0 - alpha);
 }
+`;
+
+export const planetFragment = /* glsl */ `
+${planetHeaderAndClouds}
 
 /* ============================================================================
  * WATER SHADER — Multi-octave ocean heightmap, volumetric absorption & GGX
@@ -889,19 +1103,27 @@ void main() {
     col += stars(d) * exp(-skyLum * 40.0) * 1.5;
   }
 
-  // Volumetric cumulus + high-altitude curl-noise cirrus in depth order.
+  // Volumetric cumulus + high-altitude curl-noise cirrus + storm lightning bolts in depth order.
   #if CLOUD_STEPS > 0
+  float minBoltT = 1e10;
+  vec3 boltGlow = sampleLightningBolts(d, h0, mu, tSurface, minBoltT);
   vec4 cirrus = sampleCirrus(up, h0, mu, d, L, tSurface, transitFactor);
   vec2 seg = cloudSegment(h0, mu, tSurface);
   vec4 cumulus = vec4(0.0, 0.0, 0.0, 1.0);
+  float closestCloudT = 1e10;
   if (seg.x >= 0.0) {
-    cumulus = marchClouds(up, h0, mu, d, L, seg, transitFactor);
+    cumulus = marchClouds(up, h0, mu, d, L, seg, transitFactor, closestCloudT);
     float alpha = 1.0 - cumulus.a;
     if (alpha > 0.001) {
       float tC = seg.x + (seg.y - seg.x) * 0.3;
       float haze = (1.0 - exp(-tC / 45000.0)) * (1.0 - smoothstep(CT, 20000.0, h0));
       cumulus.rgb = mix(cumulus.rgb, inscatter * alpha, haze * 0.85);
     }
+  }
+  // If lightning bolt is behind the cloud volume, attenuate it by cloud transmittance;
+  // if in front of / below the cloud base, add it directly.
+  if (minBoltT >= closestCloudT) {
+    col += boltGlow * cumulus.a;
   }
   if (h0 < CIRRUS_H) {
     col = col * cirrus.a + cirrus.rgb;
@@ -910,9 +1132,59 @@ void main() {
     col = col * cumulus.a + cumulus.rgb;
     col = col * cirrus.a + cirrus.rgb;
   }
+  if (minBoltT < closestCloudT) {
+    col += boltGlow;
+  }
   #endif
 
   gl_FragColor = vec4(col, 1.0);
+  ${fragmentDepth}
+}
+`;
+
+// Lightweight overlay pass rendered after 3D pad/rocket meshes when camera is above
+// the cloud base (using GreaterDepth so it only shades pixels occupied by 3D meshes).
+export const cloudOverlayFragment = /* glsl */ `
+${planetHeaderAndClouds}
+
+void main() {
+  #if CLOUD_STEPS > 0
+  vec3 d = normalize(uWorldToEci * normalize(vDir));
+  vec3 up = normalize(uCamUp);
+  vec3 L = normalize(uSunDir);
+  float h0 = max(uCamAlt, 0.5);
+  float mu = dot(d, up);
+
+  vec2 ground = raySphereH(h0, mu, 0.0);
+  bool hitGround = ground.x < ground.y && ground.x > 0.0;
+  if (!hitGround || h0 <= CB) discard;
+
+  float tSurface = ground.x;
+  float moonDist = max(length(uMoonRel), 1.0);
+  vec3 moonDir = uMoonRel / moonDist;
+  float moonAng = RM / moonDist;
+  float sunAng = 0.00705;
+  float sunMoonSep = length(L - moonDir);
+  float transitProgress = smoothstep(abs(moonAng - sunAng) * 0.75, moonAng + sunAng, sunMoonSep);
+  float transitFactor = mix(0.025, 1.0, pow(transitProgress, 1.35));
+
+  vec4 cirrus = sampleCirrus(up, h0, mu, d, L, tSurface, transitFactor);
+  vec2 seg = cloudSegment(h0, mu, tSurface);
+  vec4 cumulus = vec4(0.0, 0.0, 0.0, 1.0);
+  float closestCloudT = 1e10;
+  if (seg.x >= 0.0) {
+    cumulus = marchClouds(up, h0, mu, d, L, seg, transitFactor, closestCloudT);
+  }
+
+  float T = cirrus.a * cumulus.a;
+  if (T > 0.995) discard;
+  vec3 rgb = h0 < CIRRUS_H
+    ? cirrus.rgb * cumulus.a + cumulus.rgb
+    : cumulus.rgb * cirrus.a + cirrus.rgb;
+  gl_FragColor = vec4(rgb, 1.0 - T);
+  #else
+  discard;
+  #endif
   ${fragmentDepth}
 }
 `;

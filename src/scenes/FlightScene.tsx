@@ -45,9 +45,17 @@ import Rocket, { stackDims, type PieceId, type RocketHandle } from "./Rocket";
 import ShaderMat from "./ShaderMat";
 import Spacecraft from "./Spacecraft";
 import { useSmoke } from "./Smoke";
-import { planetFragment, planetVertex } from "./shaders/planet";
+import { cloudOverlayFragment, planetFragment, planetVertex } from "./shaders/planet";
 
 export type Quality = "high" | "low";
+export type WeatherState = "clear" | "cloudy" | "rain" | "storm";
+
+const WEATHER_VALUE: Record<WeatherState, number> = {
+  clear: 0,
+  cloudy: 1,
+  rain: 2,
+  storm: 3,
+};
 
 export interface WarpControl {
   /** Requested warp, or "auto" to let the game pick. */
@@ -96,6 +104,7 @@ interface Props {
   keys: React.MutableRefObject<Set<string>>;
   mapView: boolean;
   quality: Quality;
+  weather: WeatherState;
   launchDate: string;
   timeOfDay: number;
   syncCycle: boolean;
@@ -154,7 +163,7 @@ interface Debris {
   gone: boolean;
 }
 
-function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, quality, launchDate, timeOfDay, syncCycle, lookAt, onTelemetry }: Props) {
+function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, quality, weather, launchDate, timeOfDay, syncCycle, lookAt, onTelemetry }: Props) {
   const camera = useThree((s) => s.camera);
   const controls = useThree((s) => s.controls) as unknown as OrbitControlsImpl | null;
   const rocketRef = useRef<RocketHandle>(null);
@@ -164,6 +173,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   const hemiRef = useRef<THREE.HemisphereLight>(null);
   const padLightRef = useRef<THREE.PointLight>(null);
   const skyRef = useRef<THREE.Mesh>(null);
+  const cloudOverlayRef = useRef<THREE.Mesh>(null);
   const linesRef = useRef<THREE.Group>(null);
   const [smokePoints, smoke] = useSmoke();
   const debris = useRef<Partial<Record<PieceId | "serviceModule", Debris>>>({});
@@ -206,6 +216,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       uTime: { value: 0 },
       uRealTime: { value: 0 },
       uSunIntensity: { value: SUN_INTENSITY },
+      uWeather: { value: 1 },
       uEarthDay: { value: loadGlobeTex("/textures/earth_day.jpg") },
       uEarthNight: { value: loadGlobeTex("/textures/earth_night.png") },
       uEarthSpec: { value: loadGlobeTex("/textures/earth_specular.jpg") },
@@ -607,10 +618,15 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     u.uEarthAngle.value = earthAngle(t);
     // Cloud time combines real-time ambient drift (even on the pad), mission time (when syncCycle is on),
     // and time-of-day scrubbing so moving the slider forward/backward visibly moves the clouds!
-    const cloudTime = (syncCycle ? t : 0) + state.clock.elapsedTime * 1.8 + (timeOfDay - 9.0) * 180.0;
+    const cloudTime = (syncCycle ? t : 0) + state.clock.elapsedTime * 6.5 + (timeOfDay - 9.0) * 180.0;
     u.uTime.value = cloudTime;
     u.uRealTime.value = state.clock.elapsedTime + (timeOfDay - 9.0) * 12.0;
+    u.uWeather.value = WEATHER_VALUE[weather];
     skyRef.current?.position.copy(camera.position);
+    if (cloudOverlayRef.current) {
+      cloudOverlayRef.current.position.copy(camera.position);
+      cloudOverlayRef.current.visible = camR - R_EARTH > 1550 && sim.altitude < 4200;
+    }
 
     // Predicted path (KSP-style orbit line), refreshed a couple of times a second.
     const camDist = camera.position.distanceTo(controls?.target ?? camera.position);
@@ -715,6 +731,25 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         <primitive object={moonLine} />
         <primitive object={artemis.line} />
       </group>
+
+      <mesh ref={cloudOverlayRef} renderOrder={20} frustumCulled={false} visible={false}>
+        <sphereGeometry args={[1e8, 32, 16]} />
+        <ShaderMat
+          key={`cloud-${quality}`}
+          vertexShader={planetVertex}
+          fragmentShader={cloudOverlayFragment}
+          uniforms={skyUniforms}
+          defines={skyDefines}
+          side={THREE.BackSide}
+          transparent
+          depthWrite={false}
+          depthTest
+          depthFunc={THREE.GreaterDepth}
+          blending={THREE.CustomBlending}
+          blendSrc={THREE.OneFactor}
+          blendDst={THREE.OneMinusSrcAlphaFactor}
+        />
+      </mesh>
 
       <hemisphereLight ref={hemiRef} args={["#9ec4ff", "#4a4630", 0.55]} />
       <directionalLight
