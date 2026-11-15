@@ -1226,7 +1226,7 @@ def build_crewed_lunar_payload() -> dict[str, Any]:
                 "payloadToMoonKg": 27000,
                 "payloadToMoonNote": "NASA SLS Block 1 official capability: >27 metric tons (27,000+ kg) to TLI.",
                 "costMUsd": 1200,
-                "diameterM": 5.2,
+                "diameterM": 8.4,
                 "boosters": {
                     "dryKg": 198000,
                     "propKg": 1263000,
