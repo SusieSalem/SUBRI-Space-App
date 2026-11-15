@@ -1147,6 +1147,29 @@ button.suggest {
 .trip-map .tick {
   fill: #fff;
 }
+/* The Moon's way in the moving-Moon view. */
+.trip-map .moon-track {
+  fill: none;
+  stroke: rgba(226, 226, 232, 0.6);
+  stroke-width: 1.6;
+}
+.trip-map .moon-track.after {
+  stroke: rgba(226, 226, 232, 0.22);
+  stroke-dasharray: 3 5;
+}
+.trip-map .moon-tick {
+  fill: rgba(226, 226, 232, 0.8);
+}
+.trip-map .moon-tick-label {
+  fill: rgba(226, 226, 232, 0.6);
+  font-family: "Space Mono", ui-monospace, monospace;
+}
+.trip-map .moon-ghost {
+  opacity: 0.45;
+}
+.map-legend .sw.moon {
+  background: rgba(226, 226, 232, 0.7);
+}
 .trip-map .tick-label,
 .trip-map .body-label {
   fill: var(--muted);

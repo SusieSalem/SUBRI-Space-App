@@ -1,6 +1,6 @@
 // Step 2: the orbit planner. The player sets the parking orbit, where to burn and
 // how hard, and sees straight away where that takes the crew: a map of the trip in
-// the Earth-Moon frame, a close-up of the departure with a draggable burn node, and
+// space (the Moon moving along its orbit) or in the Earth-Moon frame, a close-up of the departure with a draggable burn node, and
 // three checks (reaches the Moon, enough propellant, comes home).
 //
 // While a control moves, a fast estimate (instant burn) is drawn on the main thread.
@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PartId } from "../core/design";
 import type { RocketId } from "../core/launchCheck";
-import { MOON_DISTANCE, R_EARTH, R_MOON } from "../core/orbit";
+import { MOON_DISTANCE, MOON_RATE, R_EARTH, R_MOON } from "../core/orbit";
 import {
   PARKING_ALT_RANGE,
   TLI_DV_RANGE,
@@ -94,6 +94,7 @@ export default function OrbitPlanner({ rocket, parts, plan, onChange }: Props) {
   const result = precise ? exact.result : estimate;
 
   const [searching, setSearching] = useState(false);
+  const [frame, setFrame] = useState<MapFrame>("space");
   const suggest = () => {
     setSearching(true);
     ask<{ plan: OrbitPlan }>({ kind: "suggest", plan, rocket, parts }).then((d) => {
@@ -178,14 +179,24 @@ export default function OrbitPlanner({ rocket, parts, plan, onChange }: Props) {
 
       <section className="planner-map glass-card">
         <div className="map-header">
-          <span className="label">Trajectory · Earth–Moon view</span>
+          <span className="label">
+            {frame === "space" ? "Trajectory · Moon moving" : "Trajectory · Earth–Moon view"}
+          </span>
+          <div className="quality map-frame">
+            <button className={frame === "space" ? "on" : ""} onClick={() => setFrame("space")}>
+              Moon moves
+            </button>
+            <button className={frame === "moon" ? "on" : ""} onClick={() => setFrame("moon")}>
+              Moon fixed
+            </button>
+          </div>
           <span className={`precision small ${precise ? "ok" : "muted"}`}>
             {precise ? "Real burn simulated" : "Estimating…"}
           </span>
         </div>
-        <TripMap result={result} />
+        <TripMap result={result} frame={frame} />
         <DepartureView result={result} plan={plan} onPhase={(d) => set({ phaseDeg: d })} />
-        <Legend corrected={showFlown(result)} />
+        <Legend corrected={showFlown(result)} moving={frame === "space"} />
       </section>
 
       <aside className="panel planner-checks">
@@ -353,7 +364,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 /** The corrected path is only worth drawing when the corrections bend it visibly. */
 const showFlown = (r: PlanResult) => !!r.flown && r.flown.path.length > 1 && r.flown.correctionDv >= 1;
 
-function Legend({ corrected }: { corrected: boolean }) {
+function Legend({ corrected, moving }: { corrected: boolean; moving: boolean }) {
   return (
     <div className="map-legend small">
       <span>
@@ -370,6 +381,11 @@ function Legend({ corrected }: { corrected: boolean }) {
       <span>
         <i className="sw node" /> Burn
       </span>
+      {moving && (
+        <span>
+          <i className="sw moon" /> The Moon's way
+        </span>
+      )}
     </div>
   );
 }
@@ -379,15 +395,72 @@ function Legend({ corrected }: { corrected: boolean }) {
 const toPath = (pts: MapPoint[]) =>
   pts.length ? "M" + pts.map((p) => `${Mm(p.x).toFixed(2)} ${(-Mm(p.y)).toFixed(2)}`).join("L") : "";
 
-/** The whole trip, with the Moon held still on the right (rotating Earth-Moon frame). */
-function TripMap({ result }: { result: PlanResult }) {
+/**
+ * "space": the Earth stays still and the Moon moves along its orbit, so you see the
+ * spacecraft and the Moon arrive at the same place at the same time. "moon": the
+ * Earth-Moon frame, turning with the Moon so it stays still on the right.
+ */
+type MapFrame = "space" | "moon";
+
+/** Hours after the burn when the spacecraft is closest to the Moon (or the end of the way out). */
+const meetHours = (r: PlanResult) =>
+  isFinite(r.periluneHours) ? r.periluneHours : (r.outbound[r.outbound.length - 1]?.h ?? 0);
+
+/**
+ * From the Earth-Moon frame to space (non-rotating). The view is turned so that the
+ * Moon sits on the right at the meeting, as in the Earth-Moon view.
+ */
+function toSpace(p: MapPoint, hMeet: number): MapPoint {
+  const a = -MOON_RATE * (p.h - hMeet) * 3600;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return { x: c * p.x - s * p.y, y: s * p.x + c * p.y, h: p.h };
+}
+
+/** What the Moon on the right marks in the moving view. */
+const moonLabel = (r: PlanResult) =>
+  r.hitsMoon ? "Moon at the impact" : r.checks.moon.state === "bad" ? "Moon at the closest pass" : "Moon at the flyby";
+
+/** The whole trip: in space with the Moon moving, or with the Moon held still on the right. */
+function TripMap({ result, frame }: { result: PlanResult; frame: MapFrame }) {
   const D = Mm(MOON_DISTANCE);
+  const moving = frame === "space";
+  const hMeet = meetHours(result);
+
+  // The same paths, in the frame shown.
+  const paths = useMemo(() => {
+    const tf = (pts: MapPoint[]) => (moving ? pts.map((p) => toSpace(p, hMeet)) : pts);
+    const outbound = tf(result.outbound);
+    const inbound = tf(result.inbound);
+    const flown = result.flown ? tf(result.flown.path) : [];
+    const pl = result.perilunePoint ? tf([result.perilunePoint])[0] : null;
+    // The Moon's way during the trip, split at the meeting.
+    const hEnd = Math.max(
+      hMeet,
+      inbound[inbound.length - 1]?.h ?? 0,
+      flown[flown.length - 1]?.h ?? 0,
+    );
+    const moonAt = (h: number) => toSpace({ x: MOON_DISTANCE, y: 0, h }, hMeet);
+    const before: MapPoint[] = [];
+    const after: MapPoint[] = [];
+    const moonDays: MapPoint[] = [];
+    if (moving) {
+      for (let h = 0; h < hMeet; h += 2) before.push(moonAt(h));
+      before.push(moonAt(hMeet));
+      for (let h = hMeet; h < hEnd; h += 2) after.push(moonAt(h));
+      after.push(moonAt(hEnd));
+      for (let d = 1; d * 24 <= hEnd; d++) moonDays.push(moonAt(d * 24));
+    }
+    return { outbound, inbound, flown, pl, moonBefore: before, moonAfter: after, moonDays, moonAtBurn: moonAt(0) };
+  }, [result, moving, hMeet]);
+
   const view = useMemo(() => {
     let minX = -40;
     let maxX = D + 70;
     let minY = -110;
     let maxY = 110;
-    for (const p of [...result.outbound, ...result.inbound, ...(result.flown?.path ?? [])]) {
+    const moonPts = moving ? [paths.moonAtBurn] : [];
+    for (const p of [...paths.outbound, ...paths.inbound, ...paths.flown, ...moonPts]) {
       const x = Mm(p.x);
       const y = -Mm(p.y);
       minX = Math.min(minX, x);
@@ -404,23 +477,24 @@ function TripMap({ result }: { result: PlanResult }) {
     maxY = halfY;
     const pad = (maxX - minX) * 0.05;
     return { x: minX - pad, y: minY - pad, w: maxX - minX + 2 * pad, h: maxY - minY + 2 * pad };
-  }, [result, D]);
+  }, [paths, moving, D]);
 
   // About one screen pixel in map units (the card is roughly 950 x 650 px).
   const u = Math.max(view.w / 950, view.h / 650);
   const dayTicks = useMemo(() => {
     const ticks: { x: number; y: number; d: number }[] = [];
     let next = 24;
-    for (const p of [...result.outbound, ...result.inbound]) {
+    for (const p of [...paths.outbound, ...paths.inbound]) {
       if (p.h >= next) {
         ticks.push({ x: Mm(p.x), y: -Mm(p.y), d: Math.round(next / 24) });
         next += 24;
       }
     }
     return ticks;
-  }, [result]);
+  }, [paths]);
 
-  const pl = result.perilunePoint;
+  const pl = paths.pl;
+  const mb = paths.moonAtBurn;
   return (
     <svg className="trip-map" viewBox={`${view.x} ${view.y} ${view.w} ${view.h}`} preserveAspectRatio="xMidYMid meet">
       <defs>
@@ -450,15 +524,35 @@ function TripMap({ result }: { result: PlanResult }) {
       {/* Moon's sphere of influence */}
       <circle cx={D} cy={0} r={66.1} className="soi" vectorEffect="non-scaling-stroke" />
 
-      <path d={toPath(result.outbound)} className="trip out" vectorEffect="non-scaling-stroke" />
+      {/* The Moon's way: solid until the meeting, faint afterwards, a dot a day. */}
+      {moving && (
+        <g>
+          <path d={toPath(paths.moonBefore)} className="moon-track" vectorEffect="non-scaling-stroke" />
+          <path d={toPath(paths.moonAfter)} className="moon-track after" vectorEffect="non-scaling-stroke" />
+          {paths.moonDays.map((p) => (
+            <g key={p.h}>
+              <circle cx={Mm(p.x)} cy={-Mm(p.y)} r={2 * u} className="moon-tick" />
+              <text x={Mm(p.x) + 6 * u} y={-Mm(p.y) + 4 * u} className="moon-tick-label" fontSize={9 * u}>
+                D{Math.round(p.h / 24)}
+              </text>
+            </g>
+          ))}
+          <circle cx={Mm(mb.x)} cy={-Mm(mb.y)} r={Math.max(Mm(R_MOON), 5 * u)} fill="url(#pm-moon)" className="moon-ghost" />
+          <text x={Mm(mb.x)} y={-Mm(mb.y) - 10 * u} className="body-label" fontSize={10.5 * u} textAnchor="middle">
+            Moon at the burn
+          </text>
+        </g>
+      )}
+
+      <path d={toPath(paths.outbound)} className="trip out" vectorEffect="non-scaling-stroke" />
       <path
-        d={toPath(result.inbound)}
+        d={toPath(paths.inbound)}
         className={`trip back${showFlown(result) ? " faded" : ""}`}
         vectorEffect="non-scaling-stroke"
       />
       {/* What the flight will really do: the autopilot's course corrections bend the way home. */}
       {showFlown(result) && (
-        <path d={toPath(result.flown!.path)} className="trip flown" vectorEffect="non-scaling-stroke" />
+        <path d={toPath(paths.flown)} className="trip flown" vectorEffect="non-scaling-stroke" />
       )}
 
       {dayTicks.map((t) => (
@@ -475,8 +569,8 @@ function TripMap({ result }: { result: PlanResult }) {
         Earth
       </text>
       <circle cx={D} cy={0} r={Math.max(Mm(R_MOON), 5 * u)} fill="url(#pm-moon)" />
-      <text x={D} y={18 * u} className="body-label" fontSize={11 * u} textAnchor="middle">
-        Moon
+      <text x={D} y={(moving ? 26 : 18) * u} className="body-label" fontSize={11 * u} textAnchor="middle">
+        {moving ? `${moonLabel(result)}, ${days(hMeet)}` : "Moon"}
       </text>
 
       {pl && !result.hitsMoon && result.checks.moon.state !== "bad" && (
