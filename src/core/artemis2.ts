@@ -13,7 +13,7 @@
 // unscaled ones.
 
 import raw from "../../public/data/artemis2_trajectory.json";
-import { MOON_ANGLE0, MOON_DISTANCE, MOON_RATE, R_EARTH, type Vec3 } from "./orbit";
+import { MOON_DISTANCE, R_EARTH, moonAngle, type Vec3 } from "./orbit";
 
 interface ArtemisFile {
   sourceLabel: string;
@@ -75,11 +75,14 @@ export function artemisAltitudeAt(missionTimeS: number): number | null {
 
 /** Turns a rotating-frame point into the game's inertial frame at simulation time `t`. */
 function toGame(p: number[], t: number): Vec3 {
-  const a = MOON_ANGLE0 + MOON_RATE * t;
+  // The game's Moon goes round clockwise seen from +Z (prograde with the Earth's
+  // spin), so the frame's y axis (the Moon's direction of motion) is (sin a, -cos a)
+  // and its orbit normal is -Z.
+  const a = moonAngle(t);
   const c = Math.cos(a);
   const s = Math.sin(a);
   const k = (MOON_DISTANCE / (p[4] * 1000)) * 1000;
-  return { x: (p[1] * c - p[2] * s) * k, y: (p[1] * s + p[2] * c) * k, z: p[3] * k };
+  return { x: (p[1] * c + p[2] * s) * k, y: (p[1] * s - p[2] * c) * k, z: -p[3] * k };
 }
 
 /**
