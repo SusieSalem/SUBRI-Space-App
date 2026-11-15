@@ -50,11 +50,35 @@ function formatSpeed(ms: number) {
   return Math.abs(ms) >= 1000 ? `${(ms / 1000).toFixed(2)} km/s` : `${Math.round(ms)} m/s`;
 }
 
+function formatTimeOfDay(hours: number) {
+  const totalMinutes = Math.round((((hours % 24) + 24) % 24) * 60) % 1440;
+  const hh = Math.floor(totalMinutes / 60);
+  const mm = totalMinutes % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function advanceDateAndTime(baseDateStr: string, baseHours: number, elapsedSec: number) {
+  const totalHours = baseHours + Math.max(0, elapsedSec) / 3600;
+  const dayOffset = Math.floor(totalHours / 24);
+  const displayTime = ((totalHours % 24) + 24) % 24;
+  if (dayOffset === 0) return { displayDate: baseDateStr, displayTime };
+  const parts = baseDateStr.split("-").map(Number);
+  const utc = Date.UTC(parts[0] || 2026, (parts[1] || 7) - 1, (parts[2] || 20) + dayOffset);
+  const d = new Date(utc);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return { displayDate: `${yyyy}-${mm}-${dd}`, displayTime };
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>("assembly");
   const [parts, setParts] = useState<PartId[]>(["capsule", "serviceLarge", "lifeSupport7", "solarPanels"]);
   const [rocket, setRocket] = useState<RocketId>("heavy");
   const [quality, setQuality] = useState<Quality>("low");
+  const [launchDate, setLaunchDate] = useState<string>("2026-07-20");
+  const [timeOfDay, setTimeOfDay] = useState<number>(8.6);
+  const [syncCycle, setSyncCycle] = useState<boolean>(true);
   const [mapView, setMapView] = useState(false);
   const [tel, setTel] = useState<Telemetry | null>(null);
   const [warpSetting, setWarpSetting] = useState<number | "auto">("auto");
@@ -139,6 +163,41 @@ export default function App() {
 
   const onTelemetry = useCallback((x: Telemetry) => setTel(x), []);
 
+  // When syncCycle is enabled in flight, advance the displayed Date and Time-of-Day
+  // automatically with mission time (sim.t - COUNTDOWN_S).
+  const elapsedSimSec = mode === "flight" && syncCycle && tel ? Math.max(0, tel.t - COUNTDOWN_S) : 0;
+  const { displayDate, displayTime } = advanceDateAndTime(launchDate, timeOfDay, elapsedSimSec);
+
+  const handleDateChange = useCallback(
+    (newDate: string) => {
+      if (elapsedSimSec > 0) {
+        const dayOffset = Math.floor((timeOfDay + elapsedSimSec / 3600) / 24);
+        const parts = newDate.split("-").map(Number);
+        const utc = Date.UTC(parts[0] || 2026, (parts[1] || 7) - 1, (parts[2] || 20) - dayOffset);
+        const d = new Date(utc);
+        const yyyy = d.getUTCFullYear();
+        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(d.getUTCDate()).padStart(2, "0");
+        setLaunchDate(`${yyyy}-${mm}-${dd}`);
+      } else {
+        setLaunchDate(newDate);
+      }
+    },
+    [elapsedSimSec, timeOfDay],
+  );
+
+  const handleTimeChange = useCallback(
+    (newTime: number) => {
+      if (elapsedSimSec > 0) {
+        const elapsedHours = (elapsedSimSec / 3600) % 24;
+        setTimeOfDay(((newTime - elapsedHours) % 24 + 24) % 24);
+      } else {
+        setTimeOfDay(newTime);
+      }
+    },
+    [elapsedSimSec],
+  );
+
   return (
     <div className={`app mode-${mode}`}>
       <FlightScene
@@ -151,6 +210,9 @@ export default function App() {
         keys={keys}
         mapView={mapView}
         quality={quality}
+        launchDate={launchDate}
+        timeOfDay={timeOfDay}
+        syncCycle={syncCycle}
         lookAt={lookAt}
         onTelemetry={onTelemetry}
       />
@@ -266,6 +328,14 @@ export default function App() {
                   ? "Ready. The crew is boarding. Drag to look around the rocket, scroll to zoom."
                   : "Fix the red items on the right before you can launch."}
               </span>
+              <EnvironmentControls
+                launchDate={displayDate}
+                onDateChange={handleDateChange}
+                timeOfDay={displayTime}
+                onTimeChange={handleTimeChange}
+                syncCycle={syncCycle}
+                onSyncChange={setSyncCycle}
+              />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
           </footer>
@@ -324,6 +394,14 @@ export default function App() {
               </button>
               <button onClick={() => look("earth")}>Look at Earth</button>
               <button onClick={() => look("moon")}>Look at Moon</button>
+              <EnvironmentControls
+                launchDate={displayDate}
+                onDateChange={handleDateChange}
+                timeOfDay={displayTime}
+                onTimeChange={handleTimeChange}
+                syncCycle={syncCycle}
+                onSyncChange={setSyncCycle}
+              />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
             <span className="why small">
@@ -353,6 +431,60 @@ function Bar({ label, fill }: { label: string; fill: number }) {
       <div className="bar">
         <div className="bar-fill" style={{ width: `${Math.max(0, Math.min(1, fill)) * 100}%` }} />
       </div>
+    </div>
+  );
+}
+
+function EnvironmentControls({
+  launchDate,
+  onDateChange,
+  timeOfDay,
+  onTimeChange,
+  syncCycle,
+  onSyncChange,
+}: {
+  launchDate: string;
+  onDateChange: (d: string) => void;
+  timeOfDay: number;
+  onTimeChange: (t: number) => void;
+  syncCycle: boolean;
+  onSyncChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="env-controls">
+      <button
+        type="button"
+        className={`env-sync ${syncCycle ? "on" : ""}`}
+        onClick={() => onSyncChange(!syncCycle)}
+        title={
+          syncCycle
+            ? "Day/Night cycle advances with simulation speed (click to lock time of day)"
+            : "Time of day locked (click to sync with simulation speed)"
+        }
+      >
+        {syncCycle ? "Cycle" : "Locked"}
+      </button>
+      <label className="env-field" title="Calendar date (J2000 solar & lunar ephemeris)">
+        <span className="label">Date</span>
+        <input
+          type="date"
+          className="env-date mono"
+          value={launchDate}
+          onChange={(e) => e.target.value && onDateChange(e.target.value)}
+        />
+      </label>
+      <label className="env-field env-time" title="Local time of day (moves sun, moon & clouds)">
+        <span className="label">Time</span>
+        <input
+          type="range"
+          min={0}
+          max={24}
+          step={0.01}
+          value={timeOfDay}
+          onChange={(e) => onTimeChange(parseFloat(e.target.value))}
+        />
+        <span className="mono small env-clock">{formatTimeOfDay(timeOfDay)}</span>
+      </label>
     </div>
   );
 }
