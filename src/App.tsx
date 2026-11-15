@@ -228,7 +228,7 @@ export default function App() {
               </button>
             ))}
           </div>
-          <button className={follow ? "on" : ""} onClick={() => setFollow((f) => !f)}>
+          <button className={`follow-toggle ${follow ? "on" : ""}`} onClick={() => setFollow((f) => !f)}>
             {follow ? "Following spacecraft" : "Follow spacecraft"}
           </button>
         </div>
