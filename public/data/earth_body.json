@@ -1,0 +1,146 @@
+{
+  "id": "earth",
+  "name": "Earth",
+  "radiusKm": 6371.0,
+  "muKm3s2": 398600.4,
+  "rotationPeriodSec": 86164.0,
+  "textureUrl": "procedural",
+  "hasAtmosphereDrag": true,
+  "archivedDataNotice": "Real Earth geophysical constants (NASA NSSDCA), NASA SCaN ground station locations, and archived NASA FIRMS & DONKI datasets. 3D Earth surface is rendered procedurally by GLSL shaders.",
+  "scenario": {
+    "id": "wildfire_watch",
+    "title": "Wildfire Watch (Earth)",
+    "celestialBodyId": "earth",
+    "goal": "Detect emerging wildfires worldwide early enough for emergency responders while keeping costs, power, and data downlink balanced over a 3-year mission.",
+    "requirements": {
+      "budgetM": 150,
+      "missionDurationYears": 3,
+      "missionDurationDays": 1095,
+      "maxRevisitHours": 12,
+      "maxGroundResolutionKm": 1.0,
+      "minTargetsDetected": 14
+    },
+    "rocketPayloadMultiplier": 1.0,
+    "educationalNote": "No single orbit wins at everything: LEO brings crisp resolution and cheap launches but suffers drag; SSO gives reliable daily global lighting; GEO never leaves a fire region out of sight but sits 35,786 km away and demands a Medium rocket."
+  },
+  "groundStations": [
+    {
+      "id": "nsn_wallops",
+      "name": "NASA Wallops Flight Facility (Virginia)",
+      "network": "NASA Near Space Network (NSN)",
+      "lat": 37.9249,
+      "lon": -75.4765,
+      "minElevationDeg": 5,
+      "supportedBands": [
+        "S",
+        "X"
+      ],
+      "maxDownlinkGBPerPass": 45,
+      "sourceLabel": "NASA SCaN Near Space Network",
+      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    },
+    {
+      "id": "nsn_white_sands",
+      "name": "NASA White Sands Complex (New Mexico)",
+      "network": "NASA Near Space Network (NSN)",
+      "lat": 32.5047,
+      "lon": -106.6108,
+      "minElevationDeg": 5,
+      "supportedBands": [
+        "S",
+        "Ka"
+      ],
+      "maxDownlinkGBPerPass": 55,
+      "sourceLabel": "NASA SCaN Near Space Network",
+      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    },
+    {
+      "id": "nsn_svalbard",
+      "name": "Svalbard Polar Station (Norway)",
+      "network": "NASA Near Space Network / KSAT",
+      "lat": 78.2297,
+      "lon": 15.4081,
+      "minElevationDeg": 5,
+      "supportedBands": [
+        "S",
+        "X"
+      ],
+      "maxDownlinkGBPerPass": 80,
+      "sourceLabel": "NASA SCaN Polar Ground Architecture",
+      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    },
+    {
+      "id": "nsn_fairbanks",
+      "name": "Alaska Satellite Facility / Fairbanks",
+      "network": "NASA Near Space Network (NSN)",
+      "lat": 64.8587,
+      "lon": -147.8576,
+      "minElevationDeg": 5,
+      "supportedBands": [
+        "S",
+        "X"
+      ],
+      "maxDownlinkGBPerPass": 70,
+      "sourceLabel": "NASA Earthdata / ASF Ground Station",
+      "sourceUrl": "https://asf.alaska.edu/"
+    },
+    {
+      "id": "nsn_mcmurdo",
+      "name": "McMurdo Ground Station (Antarctica)",
+      "network": "NASA Near Space Network (NSN)",
+      "lat": -77.8391,
+      "lon": 166.6671,
+      "minElevationDeg": 5,
+      "supportedBands": [
+        "S",
+        "X"
+      ],
+      "maxDownlinkGBPerPass": 75,
+      "sourceLabel": "NASA SCaN Antarctic Polar Link",
+      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    },
+    {
+      "id": "nsn_santiago",
+      "name": "Santiago Ground Station (Chile)",
+      "network": "NASA Near Space Network / SSC",
+      "lat": -33.1511,
+      "lon": -70.6664,
+      "minElevationDeg": 5,
+      "supportedBands": [
+        "S"
+      ],
+      "maxDownlinkGBPerPass": 45,
+      "sourceLabel": "NASA SCaN Southern Hemisphere Support",
+      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    },
+    {
+      "id": "nsn_dongara",
+      "name": "Dongara Station (Western Australia)",
+      "network": "NASA Near Space Network / SSC",
+      "lat": -29.0457,
+      "lon": 115.3487,
+      "minElevationDeg": 5,
+      "supportedBands": [
+        "S",
+        "X"
+      ],
+      "maxDownlinkGBPerPass": 50,
+      "sourceLabel": "NASA SCaN Indo-Pacific Coverage",
+      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    }
+  ],
+  "sources": [
+    {
+      "label": "NASA NSSDCA Earth Fact Sheet",
+      "url": "https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html"
+    },
+    {
+      "label": "NASA FIRMS Active Fire Data",
+      "url": "https://firms.modaps.eosdis.nasa.gov/"
+    },
+    {
+      "label": "NASA SCaN Near Space Network",
+      "url": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    }
+  ]
+}

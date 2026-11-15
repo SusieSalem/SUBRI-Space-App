@@ -1,0 +1,75 @@
+{
+  "dataset": "Mission Architect Launch Vehicle Catalog",
+  "archivedDataNotice": "Representative launch vehicle cost and orbital payload envelopes based on NASA Launch Services Program (LSP) & VADR open reference figures.",
+  "rockets": [
+    {
+      "id": "small",
+      "name": "Small Launcher (Electron Class)",
+      "vehicleInspiration": "Rocket Lab Electron",
+      "costM": 8,
+      "maxPayloadKg": {
+        "leo": 300,
+        "sso": 200,
+        "geo": null,
+        "lunar_polar": null,
+        "lunar_frozen": null,
+        "lunar_equatorial": null
+      },
+      "hintText": "Dedicated low-cost rocket ($8M) for lightweight satellites up to 200 kg in SSO. Cannot reach Geostationary Transfer Orbit or the Moon.",
+      "sourceLabel": "Rocket Lab Electron Payload User's Guide / NASA VADR",
+      "sourceUrl": "https://www.nasa.gov/vadr-venture-class-acquisition-of-dedicated-and-rideshare-launch-services/"
+    },
+    {
+      "id": "medium",
+      "name": "Medium Launcher (Falcon 9 Class)",
+      "vehicleInspiration": "SpaceX Falcon 9 (Reusable)",
+      "costM": 70,
+      "maxPayloadKg": {
+        "leo": 14460,
+        "sso": 11030,
+        "geo": 5500,
+        "lunar_polar": 3425,
+        "lunar_frozen": 3425,
+        "lunar_equatorial": 3425
+      },
+      "hintText": "Workhorse medium-lift rocket ($70M) capable of sending heavy observatories to geostationary transfer orbit (GTO) or trans-lunar injection.",
+      "sourceLabel": "NASA Launch Services Program (LSP) Performance Web Portal",
+      "sourceUrl": "https://elvperf.ksc.nasa.gov/"
+    },
+    {
+      "id": "heavy",
+      "name": "Heavy Launcher (Falcon Heavy Class)",
+      "vehicleInspiration": "SpaceX Falcon Heavy",
+      "costM": 150,
+      "maxPayloadKg": {
+        "leo": 60000,
+        "sso": 40000,
+        "geo": 26700,
+        "lunar_polar": 15310,
+        "lunar_frozen": 15310,
+        "lunar_equatorial": 15310
+      },
+      "hintText": "Maximum payload margin ($150M) for massive deep-space or multi-ton missions, though it consumes the entire Wildfire Watch budget on its own.",
+      "sourceLabel": "NASA LSP — Heavy-Lift Launch Vehicle Capabilities",
+      "sourceUrl": "https://elvperf.ksc.nasa.gov/"
+    },
+    {
+      "id": "rideshare",
+      "name": "Rideshare Slot ($6M / 100 kg)",
+      "vehicleInspiration": "NASA CSLI / Transporter Rideshare",
+      "costM": 6,
+      "costPer100KgM": 6,
+      "maxPayloadKg": {
+        "leo": 400,
+        "sso": 300,
+        "geo": null,
+        "lunar_polar": null,
+        "lunar_frozen": null,
+        "lunar_equatorial": null
+      },
+      "hintText": "Most affordable way to reach LEO or SSO ($6M per 100 kg) by sharing a fairing on fixed launch dates. Cannot insert into GEO or Lunar orbit.",
+      "sourceLabel": "NASA CubeSat Launch Initiative (CSLI) & VADR Rideshare",
+      "sourceUrl": "https://www.nasa.gov/kennedy/launch-services-program/cubesat-launch-initiative/"
+    }
+  ]
+}

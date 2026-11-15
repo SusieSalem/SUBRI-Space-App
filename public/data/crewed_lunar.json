@@ -1,0 +1,267 @@
+{
+  "dataset": "NASA Orion / Artemis Crewed Lunar & Launch Vehicle Reference Data",
+  "archivedDataNotice": "Sourced public engineering figures from NASA Orion, ESA European Service Module (ESM), NASA Space Launch System (SLS), SpaceX Falcon Heavy / Falcon 9, and ULA Vulcan Centaur reference sheets. Additive part masses are split to avoid double-counting solar wings and consumables already bundled in Orion/ESM gross weights; FlightSim stage parameters preserve real Isp/engine ratios scaled to the procedural 3D rocket stack.",
+  "missionRequirements": {
+    "name": "Artemis-Class Lunar Orbit and Return",
+    "durationDays": 8,
+    "extendedDurationDays": 21,
+    "crewCount": 4,
+    "budgetMUsd": 3200
+  },
+  "parts": [
+    {
+      "id": "capsule",
+      "name": "Orion-Class Crew Module (CM)",
+      "category": "crew",
+      "massKg": 9300,
+      "powerW": -1800,
+      "costMUsd": 950,
+      "oxygenDays": 2,
+      "notes": "Orion CM dry/crew baseline (~9,300 kg dry; ~10,387 kg liftoff with internal consumables & cargo), Avcoat heat shield, 4 crew capacity.",
+      "sourceLabel": "NASA Orion Spacecraft Overview & Fact Sheet",
+      "sourceUrl": "https://www.nasa.gov/humans-in-space/orion-spacecraft/"
+    },
+    {
+      "id": "serviceSmall",
+      "name": "Service Module — Flyby Propellant Load",
+      "category": "propulsion",
+      "massKg": 9480,
+      "propellantKg": 3500,
+      "powerW": -320,
+      "costMUsd": 320,
+      "oxygenDays": 0,
+      "notes": "~5,980 kg bare ESM structure/AJ10-190 + 3,500 kg hypergolic propellant: enough for free-return flyby on Medium launcher, insufficient for lunar orbit insertion.",
+      "sourceLabel": "ESA / NASA European Service Module (ESM) Reference",
+      "sourceUrl": "https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Orion/European_Service_Module"
+    },
+    {
+      "id": "serviceLarge",
+      "name": "European Service Module (ESM) — Full Lunar Load",
+      "category": "propulsion",
+      "massKg": 14580,
+      "propellantKg": 9000,
+      "powerW": -380,
+      "costMUsd": 460,
+      "oxygenDays": 0,
+      "notes": "~5,580 kg bare ESM bus/AJ10-190/tanks + 9,000 kg MON/MMH propellant (excluding 480 kg solar wings counted separately; full Orion CM+ESM TLI stack ~26,520 kg).",
+      "sourceLabel": "ESA / NASA Orion ESM Technical Specifications",
+      "sourceUrl": "https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Orion/European_Service_Module"
+    },
+    {
+      "id": "lifeSupport7",
+      "name": "ECLSS Consumables (7-Day Nominal)",
+      "category": "lifeSupport",
+      "massKg": 680,
+      "powerW": -620,
+      "costMUsd": 85,
+      "oxygenDays": 7,
+      "notes": "O2, N2, potable water, and amine CO2 scrubbers for 4 crew (~1 week; 9 days w/ CM reserve).",
+      "sourceLabel": "NASA Orion Spacecraft Overview",
+      "sourceUrl": "https://www.nasa.gov/humans-in-space/orion-spacecraft/"
+    },
+    {
+      "id": "lifeSupport14",
+      "name": "ECLSS Consumables (14-Day Extended Margin)",
+      "category": "lifeSupport",
+      "massKg": 1280,
+      "powerW": -720,
+      "costMUsd": 145,
+      "oxygenDays": 14,
+      "notes": "Extended O2, water, and CO2 scrubbing consumables supporting 14–21 day Artemis profiles.",
+      "sourceLabel": "NASA Orion Spacecraft Overview",
+      "sourceUrl": "https://www.nasa.gov/humans-in-space/orion-spacecraft/"
+    },
+    {
+      "id": "solarPanels",
+      "name": "ESM 4-Wing X-Configuration Solar Arrays",
+      "category": "power",
+      "massKg": 480,
+      "powerW": 11200,
+      "costMUsd": 65,
+      "oxygenDays": 0,
+      "notes": "Four 7-meter deployable solar wings generating ~11.2 kW at 1 AU.",
+      "sourceLabel": "ESA / Airbus Orion ESM Solar Array Specs",
+      "sourceUrl": "https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Orion/European_Service_Module"
+    },
+    {
+      "id": "radiationShield",
+      "name": "Crew Radiation Storm Shelter & HERA Dosimetry",
+      "category": "protection",
+      "massKg": 850,
+      "powerW": -40,
+      "costMUsd": 125,
+      "oxygenDays": 0,
+      "notes": "Hydrogen-rich radiation shelter stowage kit + NASA HERA particle dosimeters for DONKI solar energetic particle (SEP) events.",
+      "sourceLabel": "NASA Orion Radiation Protection Plan",
+      "sourceUrl": "https://www.nasa.gov/missions/artemis/orion/scientists-and-engineers-evaluate-orion-radiation-protection-plan/"
+    }
+  ],
+  "rockets": [
+    {
+      "id": "light",
+      "name": "Light (Single-Core Medium-Heavy Class)",
+      "realAnalog": "Vulcan VC0 / Falcon 9 Expendable Class",
+      "payloadToMoonKg": 9000,
+      "payloadToMoonNote": "Game-balanced single-core TLI limit (~9 t; real Falcon 9 expendable is ~4–5.5 t TLI / ~8.3 t GTO and Vulcan VC0/VC2 spans ~4.8–9.5 t TLI). Cannot lift a full crewed Orion stack.",
+      "costMUsd": 150,
+      "diameterM": 3.7,
+      "boosters": null,
+      "stage1": {
+        "dryKg": 25600,
+        "propKg": 411000,
+        "thrustVacN": 8227000,
+        "thrustSlN": 7607000,
+        "ispVac": 311,
+        "ispSl": 282
+      },
+      "stage2": {
+        "dryKg": 4000,
+        "propKg": 107500,
+        "thrustVacN": 981000,
+        "thrustSlN": 280000,
+        "ispVac": 348,
+        "ispSl": 150
+      },
+      "realReference": {
+        "falcon9Block5": {
+          "diameterM": 3.66,
+          "stage1Engines": "9x Merlin 1D (LOX/RP-1)",
+          "stage1ThrustSlN": 7607000,
+          "stage1IspSl": 282,
+          "stage1IspVac": 311,
+          "stage2Engine": "1x Merlin 1D Vacuum",
+          "stage2ThrustVacN": 981000,
+          "stage2IspVac": 348,
+          "stage2PropKg": 107500
+        },
+        "vulcanVC0": {
+          "diameterM": 5.4,
+          "stage1Engines": "2x BE-4 (LOX/LNG)",
+          "stage1ThrustSlN": 4893000,
+          "stage2Engine": "2x RL10C (Centaur V-L, 39 t LH2/LOX)",
+          "stage2ThrustVacN": 213000,
+          "stage2IspVac": 450
+        }
+      },
+      "notes": "Single-stick kerolox/methalox reference for FlightSim; too small for crewed Orion to the Moon.",
+      "sourceLabel": "SpaceX Falcon 9 / ULA Vulcan Centaur Reference",
+      "sourceUrl": "https://www.spacex.com/vehicles/falcon-9/"
+    },
+    {
+      "id": "medium",
+      "name": "Medium (3-Core Heavy Class)",
+      "realAnalog": "SpaceX Falcon Heavy (Expendable) Class",
+      "payloadToMoonKg": 20000,
+      "payloadToMoonNote": "NASA LSP cites 15,310 kg at C3 = -1 km2/s2 for Falcon Heavy Expendable; game-balanced to 20,000 kg so players can fly the light flyby stack (19,940 kg) while full lunar orbit stack (25,040–26,490 kg) requires Heavy (SLS Block 1).",
+      "costMUsd": 180,
+      "diameterM": 4.4,
+      "boosters": {
+        "dryKg": 51200,
+        "propKg": 822000,
+        "thrustVacN": 16454000,
+        "thrustSlN": 15214000,
+        "ispVac": 311,
+        "ispSl": 282
+      },
+      "stage1": {
+        "dryKg": 28000,
+        "propKg": 411000,
+        "thrustVacN": 8227000,
+        "thrustSlN": 7607000,
+        "ispVac": 311,
+        "ispSl": 282
+      },
+      "stage2": {
+        "dryKg": 4000,
+        "propKg": 107500,
+        "thrustVacN": 981000,
+        "thrustSlN": 280000,
+        "ispVac": 348,
+        "ispSl": 150
+      },
+      "realReference": {
+        "falconHeavy": {
+          "boosters": "2x Falcon 9 Side Cores (18x Merlin 1D)",
+          "centerCore": "1x Falcon 9 Core (9x Merlin 1D)",
+          "upperStage": "1x Merlin 1D Vacuum (981 kN, 348 s vac, ~107.5 t prop)",
+          "nasaLspLunarC3Minus1Kg": 15310,
+          "gtoExpendableKg": 26700
+        }
+      },
+      "notes": "Triple-core booster layout matching Rocket.tsx Medium stack (2 side boosters + center core).",
+      "sourceLabel": "SpaceX Falcon Heavy & NASA LSP Performance Portal",
+      "sourceUrl": "https://www.spacex.com/vehicles/falcon-heavy/"
+    },
+    {
+      "id": "heavy",
+      "name": "Heavy (NASA SLS Block 1)",
+      "realAnalog": "NASA Space Launch System Block 1",
+      "payloadToMoonKg": 27000,
+      "payloadToMoonNote": "NASA SLS Block 1 official capability: >27 metric tons (27,000+ kg) to TLI.",
+      "costMUsd": 1200,
+      "diameterM": 5.2,
+      "boosters": {
+        "dryKg": 198000,
+        "propKg": 1263000,
+        "thrustVacN": 32000000,
+        "thrustSlN": 28800000,
+        "ispVac": 268,
+        "ispSl": 237
+      },
+      "stage1": {
+        "dryKg": 100062,
+        "propKg": 980000,
+        "thrustVacN": 9116000,
+        "thrustSlN": 7440000,
+        "ispVac": 452.3,
+        "ispSl": 366
+      },
+      "stage2": {
+        "dryKg": 3765,
+        "propKg": 26853,
+        "thrustVacN": 110100,
+        "thrustSlN": 30000,
+        "ispVac": 462,
+        "ispSl": 200
+      },
+      "realReference": {
+        "slsBlock1": {
+          "boosters": "2x 5-Segment PBAN SRBs (~16 MN each, ~631,495 kg prop each, ~268 s vac)",
+          "coreStageDiameterM": 8.4,
+          "coreStageDryKg": 100062,
+          "coreStagePropKg": 980000,
+          "coreStageEngines": "4x RS-25 at 109% RPL (1,860 kN SL / 2,279 kN vac each; 366 s SL / 452.3 s vac)",
+          "icpsDiameterM": 5.0,
+          "icpsDryKg": 3765,
+          "icpsPropKg": 26853,
+          "icpsEngine": "1x RL10B-2 (110.1 kN vac, ~462 s vac)",
+          "tliCapacityKg": 27000
+        }
+      },
+      "notes": "Exact NASA SLS Block 1 SRB, RS-25 Core Stage, and ICPS RL10B-2 parameters. Note: FlightSim currently scales stage masses down for fast ascent, so tune FlightSim TLI cutoff if substituting full 2.5M kg real SLS liftoff mass.",
+      "sourceLabel": "NASA Space Launch System (SLS) & Core Stage Fact Sheets",
+      "sourceUrl": "https://www.nasa.gov/humans-in-space/space-launch-system/"
+    }
+  ],
+  "vehicleData": {
+    "escapeTowerKg": 7711,
+    "escapeTowerRealLasKg": 7711,
+    "serviceEngine": {
+      "name": "Aerojet Rocketdyne AJ10-190 (Orion ESM OME)",
+      "thrustN": 26700,
+      "isp": 316,
+      "dryKg": 118,
+      "sourceUrl": "https://www.esa.int/Science_Exploration/Human_and_Robotic_Exploration/Orion/European_Service_Module"
+    },
+    "servicePropellantKg": {
+      "serviceSmall": 3500,
+      "serviceLarge": 9000
+    },
+    "capsule": {
+      "diameter": 5.0,
+      "dragCoefficient": 1.3,
+      "parachuteCdA": 1500,
+      "sourceUrl": "https://www.nasa.gov/humans-in-space/orion-spacecraft/"
+    }
+  }
+}

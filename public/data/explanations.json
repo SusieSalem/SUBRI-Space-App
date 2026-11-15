@@ -1,0 +1,96 @@
+{
+  "dataset": "Mission Architect In-Game Educational Guide & 30s Demo Storyboard",
+  "explanations": [
+    {
+      "id": "orbital_period",
+      "term": "Orbital Period (Kepler's Third Law)",
+      "shortExplanation": "Higher orbits travel slower over a longer circle, so each lap takes much longer: ~92 minutes at 400 km LEO versus 23 h 56 m at 35,786 km GEO.",
+      "tradeOffTip": "Pick LEO/SSO for frequent passes over wildfires, or GEO if you want to match Earth's spin and stare at one continent permanently.",
+      "formula": "T = 2 * pi * sqrt(a^3 / mu)",
+      "sourceLabel": "NASA Earth Observatory — Catalog of Orbits",
+      "sourceUrl": "https://earthobservatory.nasa.gov/features/OrbitsCatalog"
+    },
+    {
+      "id": "eclipse_battery",
+      "term": "Eclipse Shadow & Battery Capacity",
+      "shortExplanation": "Whenever Earth or the Moon blocks the Sun, solar panels drop to 0 W and your battery must power the entire spacecraft until sunrise.",
+      "tradeOffTip": "A 40 Wh battery survives short low-power orbits, whereas power-hungry X-band radios or 69-minute GEO equinox shadows require the 120 Wh pack.",
+      "formula": "E_eclipse(Wh) = P_load(W) * (t_eclipse(min) / 60)",
+      "sourceLabel": "NASA Ames SmallSat SOA — Power & Energy Storage",
+      "sourceUrl": "https://www.nasa.gov/smallsat-institute/sst-soa/power/"
+    },
+    {
+      "id": "ground_resolution",
+      "term": "Ground Resolution",
+      "shortExplanation": "The smallest feature your camera can distinguish on the ground equals your orbit altitude multiplied by the sensor's angular resolution.",
+      "tradeOffTip": "Moving 50x higher to GEO makes a standard LEO camera 50x blurrier (~27 km pixels)—you need the Wide-Field GEO Telescope to keep pixels under 1 km.",
+      "formula": "GSD(km) = altitude(km) * angularRes(rad)",
+      "sourceLabel": "NASA FIRMS — Spatial Resolution of MODIS vs VIIRS",
+      "sourceUrl": "https://www.earthdata.nasa.gov/data/tools/firms/faq"
+    },
+    {
+      "id": "data_downlink",
+      "term": "Data Rate vs. Memory Bottleneck",
+      "shortExplanation": "Cameras continuously write GB of imagery to onboard flash memory, which can only empty while flying within line-of-sight of a NASA ground station.",
+      "tradeOffTip": "If your camera creates 24–32 GB/day and an S-band antenna only sends 12 GB/day, memory hits 100% and new wildfire alerts are dropped—upgrade to X-band!",
+      "formula": "Net_Buffer = (Data_Gen - Downlink_Cap) * days",
+      "sourceLabel": "NASA SCaN — Near Space Network Ground Stations",
+      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
+    },
+    {
+      "id": "launch_envelope",
+      "term": "Launch Vehicle Payload & Orbit Compatibility",
+      "shortExplanation": "Reaching Geostationary or Lunar orbit takes far more rocket delta-v than LEO, drastically shrinking how much mass a launcher can lift—or blocking small rockets altogether.",
+      "tradeOffTip": "Lighter buses let you ride Small ($8M) or Rideshare ($6M/100kg) rockets in LEO/SSO, freeing budget for better sensors.",
+      "formula": "Fits = (Mass_total <= Rocket_Max(orbit)) and (Orbit_Supported)",
+      "sourceLabel": "NASA Launch Services Program (LSP)",
+      "sourceUrl": "https://elvperf.ksc.nasa.gov/"
+    },
+    {
+      "id": "space_weather",
+      "term": "Solar Storms & Safe Mode (NASA DONKI)",
+      "shortExplanation": "Coronal Mass Ejections (CMEs) and Solar Energetic Particles (SEPs) increase radiation upsets and heat Earth's upper atmosphere, raising drag in LEO.",
+      "tradeOffTip": "Radiation-hardened computers and medium bus shielding reduce failure risk during intense storms like the May 2024 Gannon G5 event.",
+      "formula": "P_fail = 1 - reliability * (1 - storm_unshielded_risk)",
+      "sourceLabel": "NASA CCMC DONKI Space Weather Database",
+      "sourceUrl": "https://ccmc.gsfc.nasa.gov/tools/DONKI/"
+    }
+  ],
+  "videoStoryboard30s": [
+    {
+      "time": "0-3s",
+      "visual": "Night side of 3D Earth globe with glowing NASA FIRMS wildfire clusters.",
+      "caption": "Wildfires spread fast. Can you design the satellite that spots them in time?"
+    },
+    {
+      "time": "3-8s",
+      "visual": "Workshop: snapping solar wings, S-band dish, and thermal camera onto 3D satellite; 6 gauges react live.",
+      "caption": "Every part trades mass, power, data, and budget."
+    },
+    {
+      "time": "8-13s",
+      "visual": "Orbit view switching LEO -> SSO -> GEO with live ground track, shadow cone, and SCaN stations.",
+      "caption": "Every orbit changes what you can see—and how long you survive."
+    },
+    {
+      "time": "13-15s",
+      "visual": "Rocket check passes -> 3D liftoff sequence.",
+      "caption": "Pick a rocket that can actually carry your design there."
+    },
+    {
+      "time": "15-20s",
+      "visual": "Mission Control: S-band antenna falls behind, onboard memory hits 100%, red root-cause report.",
+      "caption": "Mission failed: 32 GB/day generated, only 12 GB/day downlinked."
+    },
+    {
+      "time": "20-26s",
+      "visual": "Click Redesign -> swap S-band for X-band -> fires detected worldwide -> 3-star Mission Report.",
+      "caption": "Learn from root causes. Redesign. Fly again."
+    },
+    {
+      "time": "26-30s",
+      "visual": "Mission Architect title card + public Firebase URL.",
+      "caption": "Mission Architect — Team !subri — NASA Space Apps Challenge 2026."
+    }
+  ]
+}
