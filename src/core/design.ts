@@ -1,9 +1,8 @@
 // Spacecraft parts and the totals they add up to.
-//
-// TODO: every number in this file is a placeholder picked to make the prototype
-// playable. Replace them with sourced values (NASA Ames Small Spacecraft
-// Technology report, Orion/ESM public fact sheets, etc.) and note the source
-// next to each part.
+// Masses, power, cost and oxygen come from public/data/crewed_lunar.json
+// (NASA Orion / ESA ESM reference figures); each part keeps its source.
+
+import { CREWED, crewedPart } from "./crewedData";
 
 export type PartId =
   | "capsule"
@@ -26,96 +25,72 @@ export interface Part {
   powerW: number;
   costMUsd: number;
   oxygenDays: number;
+  /** Propellant included in massKg (service modules). */
+  propellantKg?: number;
+  notes: string;
+  sourceLabel: string;
+  sourceUrl: string;
   /** Parts that can't be fitted together with this one. */
   excludes?: PartId[];
 }
 
-export const PARTS: Part[] = [
-  {
-    id: "capsule",
-    name: "Crew capsule",
-    category: "crew",
-    description: "Pressurised cabin for 4 crew, heat shield for re-entry.",
-    massKg: 9300, // TODO: placeholder
-    powerW: -1800, // TODO: placeholder
-    costMUsd: 900, // TODO: placeholder
-    oxygenDays: 1, // TODO: placeholder, emergency reserve only
-  },
-  {
-    id: "serviceSmall",
-    name: "Service module, small tanks",
-    category: "propulsion",
-    description: "Main engine and fuel for a short trip.",
-    massKg: 9000, // TODO: placeholder
-    powerW: -300, // TODO: placeholder
-    costMUsd: 300, // TODO: placeholder
-    oxygenDays: 0,
-    excludes: ["serviceLarge"],
-  },
-  {
-    id: "serviceLarge",
-    name: "Service module, large tanks",
-    category: "propulsion",
-    description: "More fuel: enough to brake into lunar orbit and come back.",
-    massKg: 15500, // TODO: placeholder
-    powerW: -350, // TODO: placeholder
-    costMUsd: 420, // TODO: placeholder
-    oxygenDays: 0,
-    excludes: ["serviceSmall"],
-  },
-  {
-    id: "lifeSupport7",
-    name: "Life support, 7 days",
-    category: "lifeSupport",
-    description: "Oxygen, water and CO2 scrubbing for a week.",
-    massKg: 700, // TODO: placeholder
-    powerW: -600, // TODO: placeholder
-    costMUsd: 80, // TODO: placeholder
-    oxygenDays: 7,
-    excludes: ["lifeSupport14"],
-  },
-  {
-    id: "lifeSupport14",
-    name: "Life support, 14 days",
-    category: "lifeSupport",
-    description: "Two weeks of consumables. Heavier, but leaves a margin.",
-    massKg: 1300, // TODO: placeholder
-    powerW: -700, // TODO: placeholder
-    costMUsd: 140, // TODO: placeholder
-    oxygenDays: 14,
-    excludes: ["lifeSupport7"],
-  },
-  {
-    id: "solarPanels",
-    name: "Solar panels",
-    category: "power",
-    description: "Four deployable wings. Without them the batteries run flat.",
-    massKg: 450, // TODO: placeholder
-    powerW: 11000, // TODO: placeholder
-    costMUsd: 60, // TODO: placeholder
-    oxygenDays: 0,
-  },
-  {
-    id: "radiationShield",
-    name: "Radiation shield",
-    category: "protection",
-    description: "Storm shelter for the crew during solar particle events.",
-    massKg: 1400, // TODO: placeholder
-    powerW: 0,
-    costMUsd: 120, // TODO: placeholder
-    oxygenDays: 0,
-  },
+/** Short in-game descriptions. Every number comes from the dataset. */
+const DESCRIPTIONS: Record<PartId, string> = {
+  capsule: "Pressurised cabin for 4 crew, heat shield for re-entry.",
+  serviceSmall: "Main engine and fuel for a short trip.",
+  serviceLarge: "More fuel: enough to brake into lunar orbit and come back.",
+  lifeSupport7: "Oxygen, water and CO2 scrubbing for a week.",
+  lifeSupport14: "Two weeks of consumables. Heavier, but leaves a margin.",
+  solarPanels: "Four deployable wings. Without them the batteries run flat.",
+  radiationShield: "Storm shelter for the crew during solar particle events.",
+};
+
+const EXCLUDES: Partial<Record<PartId, PartId[]>> = {
+  serviceSmall: ["serviceLarge"],
+  serviceLarge: ["serviceSmall"],
+  lifeSupport7: ["lifeSupport14"],
+  lifeSupport14: ["lifeSupport7"],
+};
+
+const PART_ORDER: PartId[] = [
+  "capsule",
+  "serviceSmall",
+  "serviceLarge",
+  "lifeSupport7",
+  "lifeSupport14",
+  "solarPanels",
+  "radiationShield",
 ];
+
+export const PARTS: Part[] = PART_ORDER.map((id) => {
+  const d = crewedPart(id);
+  return {
+    id,
+    name: d.name,
+    category: d.category,
+    description: DESCRIPTIONS[id],
+    massKg: d.massKg,
+    powerW: d.powerW,
+    costMUsd: d.costMUsd,
+    oxygenDays: d.oxygenDays,
+    propellantKg: d.propellantKg,
+    notes: d.notes,
+    sourceLabel: d.sourceLabel,
+    sourceUrl: d.sourceUrl,
+    excludes: EXCLUDES[id],
+  };
+});
 
 export const PARTS_BY_ID: Record<PartId, Part> = Object.fromEntries(
   PARTS.map((p) => [p.id, p]),
 ) as Record<PartId, Part>;
 
-/** What the first mission (lunar orbit and back) asks for. TODO: placeholder values. */
+/** What the mission asks for, from the dataset. */
 export const MISSION_REQUIREMENTS = {
-  name: "Lunar orbit and return",
-  durationDays: 8,
-  budgetMUsd: 3200,
+  name: CREWED.missionRequirements.name,
+  durationDays: CREWED.missionRequirements.durationDays,
+  budgetMUsd: CREWED.missionRequirements.budgetMUsd,
+  crewCount: CREWED.missionRequirements.crewCount,
 };
 
 export interface DesignTotals {
