@@ -21,7 +21,15 @@ import {
   stormOutcome,
   type StormResult,
 } from "./core/spaceWeather";
-import { playAlert } from "./audio/soundManager";
+import {
+  isMuted,
+  playAlert,
+  playClick,
+  playPartSnap,
+  playRocketCheck,
+  subscribeMute,
+  toggleMute,
+} from "./audio/soundManager";
 import { TutorialOverlay } from "./components/TutorialOverlay";
 import type { Quality, Telemetry, WarpControl, WeatherState } from "./scenes/FlightScene";
 
@@ -299,7 +307,10 @@ export default function App() {
                 <h3>{CATEGORY_LABEL[cat]}</h3>
                 {PARTS.filter((p) => p.category === cat).map((p) => (
                   <label key={p.id} className={`part ${parts.includes(p.id) ? "on" : ""}`}>
-                    <input type="checkbox" checked={parts.includes(p.id)} onChange={() => setParts((s) => togglePart(s, p.id))} />
+                    <input type="checkbox" checked={parts.includes(p.id)} onChange={() => {
+                        playPartSnap(!parts.includes(p.id));
+                        setParts((s) => togglePart(s, p.id));
+                      }} />
                     <span className="part-body">
                       <span className="part-name">{p.name}</span>
                       <span className="part-desc">{p.description}</span>
@@ -317,7 +328,10 @@ export default function App() {
               {ROCKETS.map((r) => {
                 const fits = launchCheck(t.massKg, r.id).fits;
                 return (
-                  <button key={r.id} className={`rocket ${rocket === r.id ? "on" : ""}`} onClick={() => setRocket(r.id)}>
+                  <button key={r.id} className={`rocket ${rocket === r.id ? "on" : ""}`} onClick={() => {
+                      playRocketCheck(fits);
+                      setRocket(r.id);
+                    }}>
                     <span className="rocket-name">{r.name}</span>
                     <span className="mono small">{fmt.format(r.payloadToMoonKg)} kg</span>
                     <span className="mono small muted">${fmt.format(r.costMUsd)}M</span>
@@ -405,10 +419,16 @@ export default function App() {
 
           <footer className="controls">
             <div className="buttons">
-              <button className="primary big" disabled={!canLaunch} onClick={() => setMode("planning")}>
+              <button className="primary big" disabled={!canLaunch} onClick={() => {
+                playClick();
+                setMode("planning");
+              }}>
                 Plan the orbit
               </button>
-              <button disabled={!canLaunch} onClick={() => launch(null)} title="Skip planning: the autopilot picks the trajectory">
+              <button disabled={!canLaunch} onClick={() => {
+                playClick();
+                launch(null);
+              }} title="Skip planning: the autopilot picks the trajectory">
                 Launch with autopilot plan
               </button>
               <span className="why small">
@@ -426,6 +446,7 @@ export default function App() {
                 weather={weather}
                 onWeatherChange={setWeather}
               />
+              <AudioToggle />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
           </footer>
@@ -439,13 +460,20 @@ export default function App() {
           </Suspense>
           <footer className="controls">
             <div className="buttons">
-              <button onClick={() => backTo("assembly")}>Back to assembly</button>
-              <button className="primary big" onClick={() => launch(plan)}>
+              <button onClick={() => {
+                playClick();
+                backTo("assembly");
+              }}>Back to assembly</button>
+              <button className="primary big" onClick={() => {
+                playClick();
+                launch(plan);
+              }}>
                 Launch this plan
               </button>
               <span className="why small">
                 The autopilot flies the ascent and your burn. Small course corrections on the way are automatic.
               </span>
+              <AudioToggle />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
           </footer>
@@ -517,10 +545,19 @@ export default function App() {
 
           <footer className="controls">
             <div className="buttons">
-              <button onClick={() => setPaused((p) => !p)}>{paused ? "Resume" : "Pause"}</button>
-              <button onClick={() => backTo("planning")}>Edit plan</button>
+              <button onClick={() => {
+                playClick();
+                setPaused((p) => !p);
+              }}>{paused ? "Resume" : "Pause"}</button>
+              <button onClick={() => {
+                playClick();
+                backTo("planning");
+              }}>Edit plan</button>
               <div className="speed">
-                <button className={warpSetting === "auto" ? "on" : ""} onClick={() => setWarpSetting("auto")}>
+                <button className={warpSetting === "auto" ? "on" : ""} onClick={() => {
+                playClick();
+                setWarpSetting("auto");
+              }}>
                   Auto
                 </button>
                 {WARP_LEVELS.map((w) => (
@@ -528,17 +565,29 @@ export default function App() {
                     key={w}
                     className={warpSetting === w ? "on" : ""}
                     disabled={w > tel.maxWarp}
-                    onClick={() => setWarpSetting(w)}
+                    onClick={() => {
+                playClick();
+                setWarpSetting(w);
+              }}
                   >
                     {w >= 1000 ? `${w / 1000}k` : `${w}x`}
                   </button>
                 ))}
               </div>
-              <button className={mapView ? "on" : ""} onClick={() => setMapView((m) => !m)}>
+              <button className={mapView ? "on" : ""} onClick={() => {
+                playClick();
+                setMapView((m) => !m);
+              }}>
                 Map (M)
               </button>
-              <button onClick={() => look("earth")}>Look at Earth</button>
-              <button onClick={() => look("moon")}>Look at Moon</button>
+              <button onClick={() => {
+                playClick();
+                look("earth");
+              }}>Look at Earth</button>
+              <button onClick={() => {
+                playClick();
+                look("moon");
+              }}>Look at Moon</button>
               <EnvironmentControls
                 launchDate={displayDate}
                 onDateChange={handleDateChange}
@@ -549,6 +598,7 @@ export default function App() {
                 weather={weather}
                 onWeatherChange={setWeather}
               />
+              <AudioToggle />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
             <span className="why small">
@@ -715,6 +765,19 @@ function EnvironmentControls({
         />
         <span className="mono small env-clock">{formatTimeOfDay(timeOfDay)}</span>
       </label>
+    </div>
+  );
+}
+
+function AudioToggle() {
+  const [muted, setMutedState] = useState(() => isMuted());
+  useEffect(() => subscribeMute(setMutedState), []);
+  return (
+    <div className="quality">
+      <span className="label">Audio</span>
+      <button className={!muted ? "on" : ""} onClick={() => toggleMute()}>
+        {muted ? "Muted" : "On"}
+      </button>
     </div>
   );
 }

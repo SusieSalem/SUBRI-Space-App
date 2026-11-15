@@ -32,7 +32,13 @@ import {
 } from "../core/orbit";
 import { artemisPath } from "../core/artemis2";
 import { COUNTDOWN_S, FlightSim, MOUNT_HEIGHT, PAD_ECEF, PHASE_LABEL, type PieceId as SimPieceId } from "../core/simulate";
-import { playCountdownBeep, playLaunchRumbling } from "../audio/soundManager";
+import {
+  playAlert,
+  playCountdownBeep,
+  playLaunchRumbling,
+  playMissionResult,
+  playPartSnap,
+} from "../audio/soundManager";
 import Astronaut from "./Astronaut";
 import LaunchSite from "./LaunchSite";
 import Rocket, { stackDims, type PieceId, type RocketHandle } from "./Rocket";
@@ -312,7 +318,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     }
     const t = sim.t;
 
-    // Sounds: countdown beeps and the engine rumble.
+    // Sounds: countdown beeps, engine rumble, and mission outcome.
     if (flying) {
       for (let s = 5; s >= 0; s--) {
         const key = `beep${s}`;
@@ -324,6 +330,17 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       if (t >= COUNTDOWN_S - 3 && !sounds.current.has("rumble")) {
         sounds.current.add("rumble");
         stopRumble.current = playLaunchRumbling(20);
+      }
+      if (sim.phase === "splashdown" && !sounds.current.has("missionDone")) {
+        sounds.current.add("missionDone");
+        stopRumble.current?.();
+        playMissionResult(true, 3);
+      }
+      if (sim.phase === "failed" && !sounds.current.has("missionFailed")) {
+        sounds.current.add("missionFailed");
+        stopRumble.current?.();
+        playAlert("failure");
+        playMissionResult(false, 1);
       }
     }
 
@@ -337,6 +354,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     while (eventIndex.current < sim.events.length) {
       const e = sim.events[eventIndex.current++];
       if (e.type !== "separation" || !e.piece) continue;
+      playPartSnap(false);
       const piece = mapPiece(e.piece);
       const v = { ...e.v };
       if (e.piece === "escapeTower") {

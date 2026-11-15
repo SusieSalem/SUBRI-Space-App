@@ -929,6 +929,14 @@ button.primary.big {
   width: 100%;
   text-align: center;
 }
+/* The footers hold many controls: let them wrap instead of running off screen. */
+.controls .buttons {
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  row-gap: 6px;
+  padding-left: 0;
+  border-left: none;
+}
 .mode-flight .speed button {
   padding: 6px 10px;
   font-size: 12px;
