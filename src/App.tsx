@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  isMuted,
+  playClick,
+  playPartSnap,
+  playRocketCheck,
+  subscribeMute,
+  toggleMute,
+} from "./audio/soundManager";
+import {
   MISSION_REQUIREMENTS,
   PARTS,
   designIssues,
@@ -179,7 +187,14 @@ export default function App() {
                 <h3>{CATEGORY_LABEL[cat]}</h3>
                 {PARTS.filter((p) => p.category === cat).map((p) => (
                   <label key={p.id} className={`part ${parts.includes(p.id) ? "on" : ""}`}>
-                    <input type="checkbox" checked={parts.includes(p.id)} onChange={() => setParts((s) => togglePart(s, p.id))} />
+                    <input
+                      type="checkbox"
+                      checked={parts.includes(p.id)}
+                      onChange={() => {
+                        playPartSnap(!parts.includes(p.id));
+                        setParts((s) => togglePart(s, p.id));
+                      }}
+                    />
                     <span className="part-body">
                       <span className="part-name">{p.name}</span>
                       <span className="part-desc">{p.description}</span>
@@ -197,7 +212,14 @@ export default function App() {
               {ROCKETS.map((r) => {
                 const fits = launchCheck(t.massKg, r.id).fits;
                 return (
-                  <button key={r.id} className={`rocket ${rocket === r.id ? "on" : ""}`} onClick={() => setRocket(r.id)}>
+                  <button
+                    key={r.id}
+                    className={`rocket ${rocket === r.id ? "on" : ""}`}
+                    onClick={() => {
+                      playRocketCheck(fits);
+                      setRocket(r.id);
+                    }}
+                  >
                     <span className="rocket-name">{r.name}</span>
                     <span className="mono small">{fmt.format(r.payloadToMoonKg)} kg</span>
                     <span className="mono small muted">${fmt.format(r.costMUsd)}M</span>
@@ -266,6 +288,7 @@ export default function App() {
                   ? "Ready. The crew is boarding. Drag to look around the rocket, scroll to zoom."
                   : "Fix the red items on the right before you can launch."}
               </span>
+              <AudioToggle />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
           </footer>
@@ -302,10 +325,30 @@ export default function App() {
 
           <footer className="controls">
             <div className="buttons">
-              <button onClick={() => setPaused((p) => !p)}>{paused ? "Resume" : "Pause"}</button>
-              <button onClick={backToAssembly}>Back to assembly</button>
+              <button
+                onClick={() => {
+                  playClick();
+                  setPaused((p) => !p);
+                }}
+              >
+                {paused ? "Resume" : "Pause"}
+              </button>
+              <button
+                onClick={() => {
+                  playClick();
+                  backToAssembly();
+                }}
+              >
+                Back to assembly
+              </button>
               <div className="speed">
-                <button className={warpSetting === "auto" ? "on" : ""} onClick={() => setWarpSetting("auto")}>
+                <button
+                  className={warpSetting === "auto" ? "on" : ""}
+                  onClick={() => {
+                    playClick();
+                    setWarpSetting("auto");
+                  }}
+                >
                   Auto
                 </button>
                 {WARP_LEVELS.map((w) => (
@@ -313,17 +356,41 @@ export default function App() {
                     key={w}
                     className={warpSetting === w ? "on" : ""}
                     disabled={w > tel.maxWarp}
-                    onClick={() => setWarpSetting(w)}
+                    onClick={() => {
+                      playClick();
+                      setWarpSetting(w);
+                    }}
                   >
                     {w >= 1000 ? `${w / 1000}k` : `${w}x`}
                   </button>
                 ))}
               </div>
-              <button className={mapView ? "on" : ""} onClick={() => setMapView((m) => !m)}>
+              <button
+                className={mapView ? "on" : ""}
+                onClick={() => {
+                  playClick();
+                  setMapView((m) => !m);
+                }}
+              >
                 Map (M)
               </button>
-              <button onClick={() => look("earth")}>Look at Earth</button>
-              <button onClick={() => look("moon")}>Look at Moon</button>
+              <button
+                onClick={() => {
+                  playClick();
+                  look("earth");
+                }}
+              >
+                Look at Earth
+              </button>
+              <button
+                onClick={() => {
+                  playClick();
+                  look("moon");
+                }}
+              >
+                Look at Moon
+              </button>
+              <AudioToggle />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
             <span className="why small">
@@ -353,6 +420,19 @@ function Bar({ label, fill }: { label: string; fill: number }) {
       <div className="bar">
         <div className="bar-fill" style={{ width: `${Math.max(0, Math.min(1, fill)) * 100}%` }} />
       </div>
+    </div>
+  );
+}
+
+function AudioToggle() {
+  const [muted, setMutedState] = useState(() => isMuted());
+  useEffect(() => subscribeMute(setMutedState), []);
+  return (
+    <div className="quality">
+      <span className="label">Audio</span>
+      <button className={!muted ? "on" : ""} onClick={() => toggleMute()}>
+        {muted ? "Muted" : "On"}
+      </button>
     </div>
   );
 }
