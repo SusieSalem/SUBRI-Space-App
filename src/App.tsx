@@ -8,6 +8,7 @@ import {
   type PartId,
 } from "./core/design";
 import { ROCKETS, ROCKETS_BY_ID, launchCheck, type RocketId } from "./core/launchCheck";
+import TrajectoryMap from "./components/TrajectoryMap";
 import SpaceScene, { type MissionClock } from "./scenes/SpaceScene";
 import { MISSION_DURATION, PHASES, type MissionState } from "./scenes/mission";
 
@@ -190,6 +191,8 @@ export default function App() {
           </ul>
         )}
       </aside>
+
+      <TrajectoryMap clock={clock} phaseLabel={phaseLabel} />
 
       <footer className="controls">
         <div className="phase">
