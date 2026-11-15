@@ -9,7 +9,7 @@ Playable prototype in two steps, in one continuous world:
 1. **Assembly.** You start on the ground at the launch pad. The whole stack stands on the pad: rocket, crew spacecraft and escape tower. Pick parts and a rocket on the left and the stack updates live. The gauges on the right say whether it is ready.
 2. **Launch and flight.** The rocket flies under real physics from the pad to the Moon and back, and the camera stays with it the whole way. There are no scene changes or fades: the pad drops away, the sky darkens, the Earth curves below because the rocket is actually climbing.
 
-Part, rocket, and engine numbers in `src/core/` currently use `TODO` / `TODO-source` placeholders, while `public/data/crewed_lunar.json` holds sourced NASA Orion CM, ESA European Service Module (ESM), SLS Block 1, Falcon Heavy, and Vulcan Centaur specifications ready to wire in.
+Part, rocket, and engine numbers in `src/core/` are loaded from `public/data/crewed_lunar.json` (sourced NASA Orion CM, ESA European Service Module, SLS Block 1, Falcon 9 / Falcon Heavy and Vulcan Centaur figures, typed by `CrewedLunarDataset` in `src/types/mission.ts`). With them, the flight simulation flies the dataset's reference designs end to end: `crewed_flyby` on Medium and `crewed_min_orbit` / `crewed_full_artemis` on Heavy reach the Moon and splash down; Light reaches orbit but cannot send the capsule to the Moon.
 
 ### How the flight works
 
@@ -161,11 +161,12 @@ src/
   types/
     mission.ts           Shared TypeScript contract across engine, 3D scenes, UI, and data
   core/
-    design.ts            Spacecraft parts, totals and design checks (placeholder numbers)
-    launchCheck.ts       Rockets and whether the spacecraft fits (placeholder numbers)
+    crewedData.ts        Loads crewed_lunar.json through the typed contract
+    design.ts            Spacecraft parts, totals and design checks (from crewed_lunar.json)
+    launchCheck.ts       Rockets and whether the spacecraft fits (from crewed_lunar.json)
     orbit.ts             Constants, gravity, atmosphere, orbit elements, trajectory propagator
     simulate.ts          Real-physics 50 Hz flight: vehicle, staging, autopilot, burn planning
-    vehicleData.ts       Stage and engine figures (placeholders, TODO-source)
+    vehicleData.ts       Stage and engine figures, launch abort system, ESM engine (from crewed_lunar.json)
   scenes/
     FlightScene.tsx      Continuous launch-to-Moon scene: floating origin, debris, smoke, orbit lines
     LaunchSite.tsx       Pad, service tower, buildings

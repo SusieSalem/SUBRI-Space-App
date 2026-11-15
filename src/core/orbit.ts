@@ -49,7 +49,7 @@ const RHO0 = 1.225;
 /** Mean motion of the Moon on a circular orbit, rad/s. */
 export const MOON_RATE = Math.sqrt((MU_EARTH + MU_MOON) / MOON_DISTANCE ** 3);
 /** Moon angle at mission time 0. Chosen so the Moon is above the horizon on launch day. */
-export const MOON_ANGLE0 = 1.9;
+export const MOON_ANGLE0 = 2.7;
 
 /** Sun direction in ECI (fixed over a mission of a few days). */
 export const SUN_DIR: Vec3 = vnorm({ x: 0.62, y: 0.55, z: 0.56 });
@@ -211,8 +211,9 @@ export function coastStep(r: Vec3, v: Vec3, t: number, maxStep = 600): number {
   const m = moonPosition(t);
   const rm = Math.hypot(r.x - m.x, r.y - m.y, r.z - m.z);
   const speed = vlen(v) + 1;
-  const dist = Math.min(re, rm);
-  // About 300 steps per orbit at the current distance.
+  // About 300 steps per orbit round the Earth, finer near the Moon where small errors
+  // grow a lot during the swing-by.
+  const dist = Math.min(re, rm * 0.5);
   return Math.max(0.5, Math.min(maxStep, (0.02 * dist) / speed));
 }
 
