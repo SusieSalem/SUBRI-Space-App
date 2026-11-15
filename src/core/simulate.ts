@@ -7,11 +7,12 @@
 //
 // Nothing here draws anything. The scene reads the state and the event list.
 
-import { PARTS_BY_ID, type PartId } from "./design";
+import { MISSION_REQUIREMENTS, PARTS_BY_ID, type PartId } from "./design";
 import type { RocketId } from "./launchCheck";
 import {
   ATMOSPHERE_TOP,
   G0,
+  MOON_DISTANCE,
   MU_EARTH,
   R_EARTH,
   R_MOON,
@@ -20,6 +21,7 @@ import {
   coastRk4,
   coastStep,
   ecefToEci,
+  findPhaseCrossing,
   gravity,
   moonPosition,
   moonVelocity,
@@ -46,6 +48,7 @@ import {
   SERVICE_PROPELLANT_KG,
   type StageData,
 } from "./vehicleData";
+import type { OrbitPlan } from "./orbitPlan";
 
 /** Seconds of countdown before liftoff. Mission time t = 0 is the start of the countdown. */
 export const COUNTDOWN_S = 10;
@@ -57,7 +60,20 @@ export const PAD_ECEF: Vec3 = { x: 0, y: R_EARTH, z: 0 };
 
 const RETURN_PERIGEE_TARGET = 52000;
 const PERILUNE_TARGET = R_MOON + 4500000;
+/** Transfer apogees tried by the autopilot, as a share of the Moon's distance. */
+const TLI_APOGEE_FACTORS = [1.0, 1.05, 1.1, 1.15, 1.2, 1.3];
+/**
+ * Farthest pass by the Moon still counted as a swing round it. With the Moon going
+ * round the right way, free returns pass 5,000-25,000 km from it.
+ */
+const FREE_RETURN_MAX_PERILUNE = 30000000;
 const PHYSICS_DT = 0.02; // 50 Hz
+const MAX_G = 4;
+/** Service module delta-v kept back for course corrections (m/s). */
+/** Delta-v the service module keeps for course corrections (m/s). */
+export const SERVICE_RESERVE_DV = 150;
+/** Centre-core throttle while strap-on boosters burn (an engineering assumption, not dataset values). */
+const CORE_THROTTLE_WITH_BOOSTERS: Record<RocketId, number> = { light: 1, medium: 0.55, heavy: 1 };
 
 export type PieceId = "boosters" | "stage1" | "stage2" | "escapeTower" | "serviceModule";
 
@@ -126,6 +142,12 @@ export class FlightSim {
   message = "";
 
   readonly rocketId: RocketId;
+  /** Target height of the circular parking orbit (m). */
+  readonly parkingAlt: number;
+  /** The player's trans-lunar plan, if they made one in the orbit planner. */
+  plan: OrbitPlan | null;
+  /** Stop advancing once in the parking orbit (used by the planner). */
+  holdAtParking = false;
   readonly hasCapsule: boolean;
   private boosters: Stage | null;
   private stage1: Stage;
@@ -143,13 +165,29 @@ export class FlightSim {
   private tliCutoff = Infinity;
   private tcmTime = Infinity;
   private tcmDv = 0;
+  /** Unit vector for the correction burn (prograde before the flyby, sideways after). */
+  private tcmDir: Vec3 = { x: 1, y: 0, z: 0 };
   private tcmDone = 0;
+  /** Delta-v spent on course corrections so far (m/s). */
+  tcmUsed = 0;
   private flybyPassed = false;
   private planned = false;
   private chuteTime = 0;
   private tcm2Planned = false;
+  private circularising = false;
+  /** State on reaching the parking orbit (the planner predicts from here). */
+  parkingState: CoastState | null = null;
+  private lastEcc = Infinity;
 
   maxG = 0;
+  /** Lowest height above the Moon's surface so far (m) and when (s), for the Artemis II comparison. */
+  closestMoon = Infinity;
+  closestMoonT = 0;
+  /** Highest altitude above the Earth so far (m) and when (s). */
+  maxAltitude = 0;
+  maxAltitudeT = 0;
+  /** When the capsule reached entry interface (s), or Infinity. */
+  entryT = Infinity;
   /** 0..1 re-entry heating, for the glow. */
   heat = 0;
   /** Engines producing thrust right now, for the exhaust. */
@@ -160,8 +198,10 @@ export class FlightSim {
     service: false,
   };
 
-  constructor(rocket: RocketId, parts: PartId[]) {
+  constructor(rocket: RocketId, parts: PartId[], plan: OrbitPlan | null = null) {
     this.rocketId = rocket;
+    this.plan = plan;
+    this.parkingAlt = plan?.parkingAltM ?? PARKING_ALT;
     const data = ROCKET_DATA[rocket];
     this.boosters = data.boosters ? { data: data.boosters, prop: data.boosters.propKg, attached: true } : null;
     this.stage1 = { data: data.stage1, prop: data.stage1.propKg, attached: true };
@@ -260,6 +300,7 @@ export class FlightSim {
     let guard = 0;
     while (remaining > 1e-9 && guard++ < 200000) {
       if (this.phase === "splashdown" || this.phase === "failed") return;
+      if (this.holdAtParking && this.phase === "parking") return;
       const fine = this.onPad || this.throttle > 0 || this.altitude < ATMOSPHERE_TOP || this.phase === "prelaunch";
       let dt: number;
       if (fine) {
@@ -284,6 +325,21 @@ export class FlightSim {
         }
       }
       remaining -= dt;
+      this.trackExtremes();
+    }
+  }
+
+  private trackExtremes() {
+    if (this.onPad) return;
+    const dMoon = this.moonDistance;
+    if (dMoon < this.closestMoon) {
+      this.closestMoon = dMoon;
+      this.closestMoonT = this.t;
+    }
+    const alt = this.altitude;
+    if (alt > this.maxAltitude) {
+      this.maxAltitude = alt;
+      this.maxAltitudeT = this.t;
     }
   }
 
@@ -309,12 +365,16 @@ export class FlightSim {
     let mdot = 0;
     this.burning = { boosters: false, stage1: false, stage2: false, service: false };
 
+    // Crewed flights keep the load under ~4 g: liquid engines throttle back near burnout.
+    const massNow = this.mass;
+    const fullThrust = this.currentThrustAcc() * massNow;
+    const gLimit = fullThrust > 0 ? Math.min(1, (MAX_G * G0 * massNow) / fullThrust) : 1;
     const use = (s: Stage | null, key: "boosters" | "stage1" | "stage2") => {
       if (!s || !s.attached || s.prop <= 0) return;
       const tv = s.data.thrustVacN;
       const ts = s.data.thrustSlN;
       const isp = s.data.ispSl * p + s.data.ispVac * (1 - p);
-      const f = (ts * p + tv * (1 - p)) * this.throttle;
+      const f = (ts * p + tv * (1 - p)) * this.throttle * gLimit;
       const flow = f / (isp * G0);
       thrust += f;
       mdot += flow;
@@ -325,7 +385,12 @@ export class FlightSim {
     if (this.throttle > 0) {
       if (this.boosters?.attached) {
         use(this.boosters, "boosters");
+        // A liquid centre core (Medium, Falcon Heavy-style) throttles down while the side
+        // boosters burn so it has propellant left after they drop away.
+        const t0 = this.throttle;
+        this.throttle = t0 * CORE_THROTTLE_WITH_BOOSTERS[this.rocketId];
         use(this.stage1, "stage1");
+        this.throttle = t0;
       } else if (this.stage1.attached) use(this.stage1, "stage1");
       else if (this.stage2.attached) use(this.stage2, "stage2");
       else if (this.serviceAttached && this.serviceProp > 0) {
@@ -400,7 +465,10 @@ export class FlightSim {
     this.v = vadd(this.v, vscale(acc, dt));
     this.r = vadd(this.r, vscale(this.v, dt));
     this.t += dt;
-    if (mdot > 0 && this.phase === "tcm") this.tcmDone += (thrust / m) * dt;
+    if (mdot > 0 && this.phase === "tcm") {
+      this.tcmDone += (thrust / m) * dt;
+      this.tcmUsed += (thrust / m) * dt;
+    }
 
     this.checkStaging();
 
@@ -467,12 +535,21 @@ export class FlightSim {
       case "tli": {
         this.pointAlong(this.v);
         const energy = vdot(this.v, this.v) / 2 - MU_EARTH / vlen(this.r);
-        const hasFuel = this.stage2.attached && this.stage2.prop > 0;
+        // Upper stage first; if it runs dry, drop it and finish with the service module.
+        if (this.stage2.attached && this.stage2.prop <= 0 && energy < this.tliEnergy && this.serviceAttached) {
+          this.stage2.attached = false;
+          this.separate("stage2", "Upper stage spent. The service module finishes the burn.");
+        }
+        const serviceReserveKg = this.serviceReserveKg();
+        const hasFuel =
+          (this.stage2.attached && this.stage2.prop > 0) || (this.serviceAttached && this.serviceProp > serviceReserveKg);
         this.throttle = energy < this.tliEnergy && hasFuel ? 1 : 0;
         if (this.throttle === 0) {
           this.phase = "transit";
           this.tliCutoff = t;
           this.tliStart = Infinity;
+          // Upper stage already gone (service module finished the burn): plan the correction now.
+          if (!this.stage2.attached) this.tcmTime = t + 3 * 3600;
           if (energy < this.tliEnergy) this.emit("message", "Upper stage out of propellant before reaching the Moon's distance");
           else this.emit("message", "Engine cutoff. On the way to the Moon.");
         }
@@ -497,8 +574,7 @@ export class FlightSim {
         this.checkFlybyAndReturn();
         break;
       case "tcm": {
-        const dir = this.tcmDv >= 0 ? this.v : vscale(this.v, -1);
-        this.pointAlong(dir);
+        this.pointAlong(vscale(this.tcmDir, this.tcmDv >= 0 ? 1 : -1));
         this.throttle = this.tcmDone < Math.abs(this.tcmDv) && this.serviceProp > 0 ? 1 : 0;
         if (this.throttle === 0) {
           this.phase = "transit";
@@ -510,6 +586,7 @@ export class FlightSim {
         this.throttle = 0;
         if (this.altitude < ATMOSPHERE_TOP) {
           this.phase = "entry";
+          this.entryT = this.t;
           this.emit("message", "Entry interface");
         }
         break;
@@ -563,10 +640,50 @@ export class FlightSim {
     const hdir = vh > 1 ? vscale(horiz, 1 / vh) : east;
     const orbit = this.orbit();
 
-    if (orbit.periapsisAlt > Math.min(PARKING_ALT - 12000, alt - 6000)) {
-      this.throttle = 0;
-      this.phase = "parking";
-      this.emit("message", `Orbit reached: ${Math.round(orbit.periapsisAlt / 1000)} x ${Math.round(orbit.apoapsisAlt / 1000)} km`);
+    const target = this.parkingAlt;
+
+    if (orbit.periapsisAlt > Math.min(target - 12000, alt - 6000)) {
+      this.enterParking(orbit);
+      return;
+    }
+
+    // Apoapsis at the target height: stop climbing, coast up to it and circularise
+    // there (like a real perigee-raise burn). Without this a powerful first stage
+    // overshoots into a long ellipse instead of the parking orbit the plan asked for.
+    if (alt > 50000 && (this.circularising || orbit.apoapsisAlt >= target - 2000)) {
+      const r = vlen(this.r);
+      const rApo = R_EARTH + Math.max(orbit.apoapsisAlt, alt);
+      const vAtApo = Math.sqrt(Math.max(0, MU_EARTH * (2 / rApo - 1 / orbit.semiMajorAxis)));
+      const dvCirc = Math.max(0, Math.sqrt(MU_EARTH / rApo) - vAtApo);
+      const acc = Math.max(this.currentThrustAcc(), 0.1);
+      if (!this.circularising && (vv <= 0 || orbit.timeToApoapsis <= dvCirc / acc / 2)) {
+        this.circularising = true;
+        this.lastEcc = Infinity;
+      }
+      if (!this.circularising) {
+        this.throttle = 0;
+        this.attitude = hdir;
+        return;
+      }
+      // Burning prograde near apoapsis lowers the eccentricity until the orbit is
+      // round; once it starts to grow again the orbit is as circular as it gets.
+      const e = orbit.eccentricity;
+      if (e > this.lastEcc && e < 0.03) {
+        this.enterParking(orbit);
+        return;
+      }
+      this.lastEcc = e;
+      this.throttle = 1;
+      // Hold the height while the burn builds up the horizontal speed.
+      const gEff = MU_EARTH / (r * r) - (vh * vh) / r;
+      const vvWanted = Math.max(-60, Math.min(60, (target - alt) / 60));
+      const sUp = Math.max(-0.5, Math.min(0.85, (gEff + (vvWanted - vv) / 10) / acc));
+      this.attitude = vnorm(vadd(vscale(up, sUp), vscale(hdir, Math.sqrt(1 - sUp * sUp))));
+      if (!this.stage1.attached && this.stage2.prop <= 0) {
+        this.phase = "failed";
+        this.throttle = 0;
+        this.emit("message", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
+      }
       return;
     }
     this.throttle = 1;
@@ -585,7 +702,7 @@ export class FlightSim {
       const r = vlen(this.r);
       const vCirc = Math.sqrt(MU_EARTH / r);
       const tGo = Math.max(25, (vCirc - vh) / Math.max(thrustAcc, 0.3));
-      const vvWanted = Math.max(-40, Math.min(400, (PARKING_ALT - alt) / tGo));
+      const vvWanted = Math.max(-40, Math.min(400, (target - alt) / tGo));
       const gEff = MU_EARTH / (r * r) - (vh * vh) / r;
       const wantUp = gEff + (vvWanted - vv) / 10;
       const s = Math.max(-0.4, Math.min(0.85, wantUp / Math.max(thrustAcc, 0.1)));
@@ -597,6 +714,28 @@ export class FlightSim {
       this.throttle = 0;
       this.emit("message", "Upper stage out of propellant before orbit. The rocket is too small for this load.");
     }
+  }
+
+  /** Engines off in the parking orbit. Lower stages still attached are dropped. */
+  private enterParking(orbit: OrbitInfo) {
+    this.throttle = 0;
+    this.phase = "parking";
+    this.parkingState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
+    if (this.boosters?.attached) {
+      this.boosters.attached = false;
+      this.separate("boosters", "Booster separation");
+    }
+    if (this.stage1.attached) {
+      this.stage1.attached = false;
+      this.separate("stage1", "First stage separation");
+    }
+    this.emit("message", `Orbit reached: ${Math.round(orbit.periapsisAlt / 1000)} x ${Math.round(orbit.apoapsisAlt / 1000)} km`);
+  }
+
+  /** Propellant the service module must keep for course corrections. */
+  private serviceReserveKg(): number {
+    const ve = SERVICE_ENGINE.isp * G0;
+    return this.mass * (1 - Math.exp(-SERVICE_RESERVE_DV / ve));
   }
 
   private currentThrustAcc(): number {
@@ -624,87 +763,210 @@ export class FlightSim {
   /* ------------------------------------------------------------- planning */
 
   /** Chooses when to start the TLI burn so the coast passes close to the Moon. */
+  /**
+   * Delta-v left for the trans-lunar injection (rocket equation): the upper stage,
+   * then the service module, which keeps a reserve for course corrections.
+   */
+  tliBudget(): { stage2Dv: number; serviceDv: number; available: number } {
+    const ve = this.stage2.data.ispVac * G0;
+    const stage2Dv = this.stage2.attached ? ve * Math.log(this.mass / (this.mass - this.stage2.prop)) : 0;
+    const massAfterStage2 = this.mass - (this.stage2.attached ? this.stage2.data.dryKg + this.stage2.prop : 0);
+    const serviceDv = this.serviceAttached && this.serviceProp > 0
+      ? SERVICE_ENGINE.isp * G0 * Math.log(massAfterStage2 / (massAfterStage2 - this.serviceProp))
+      : 0;
+    return { stage2Dv, serviceDv, available: stage2Dv + Math.max(0, serviceDv - SERVICE_RESERVE_DV) };
+  }
+
+  /** Finite burn time for a TLI of `dv`: upper stage first, then the service module. */
+  tliBurnTime(dv: number): number {
+    const { stage2Dv } = this.tliBudget();
+    const ve = this.stage2.data.ispVac * G0;
+    const massAfterStage2 = this.mass - (this.stage2.attached ? this.stage2.data.dryKg + this.stage2.prop : 0);
+    const dv2 = Math.min(dv, stage2Dv);
+    const t2 = this.stage2.attached ? (this.mass * (1 - Math.exp(-dv2 / ve))) / (this.stage2.data.thrustVacN / ve) : 0;
+    const dvS = Math.max(0, dv - dv2);
+    const veS = SERVICE_ENGINE.isp * G0;
+    const tS = dvS > 0 ? (massAfterStage2 * (1 - Math.exp(-dvS / veS))) / (SERVICE_ENGINE.thrustN / veS) : 0;
+    return t2 + tS;
+  }
+
+  /**
+   * How long before the ideal (instant) burn point to light the engine: the time it
+   * takes to build up half of the burn's delta-v. For a burn the upper stage does
+   * alone this is about half the burn; when the weak service-module engine has to
+   * finish it, the midpoint comes much earlier than half the burn time.
+   */
+  private tliLeadTime(dv: number): number {
+    return this.tliBurnTime(dv / 2);
+  }
+
+  /** Seconds to keep clear before the burn point, so a burn centred on it can start in time. */
+  tliLead(): number {
+    return 60 + this.tliBurnTime(3300) / 2;
+  }
+
+  /** An independent copy of the simulation, to try a plan without touching this one. */
+  clone(): FlightSim {
+    const c = Object.create(FlightSim.prototype) as FlightSim;
+    return Object.assign(c, structuredClone({ ...this }));
+  }
+
+  /** Flies the player's plan: burn its delta-v where the Moon is the chosen angle ahead. */
+  private planTliFromPlan(plan: OrbitPlan) {
+    const start = this.parkingState ?? { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
+    const burn = findPhaseCrossing(start, plan.phaseDeg, this.tliLead());
+    const r = vlen(burn.r);
+    const speed = vlen(burn.v) + plan.tliDvMs;
+    this.tliStart = Math.max(this.t, burn.t - this.tliLeadTime(plan.tliDvMs));
+    this.tliEnergy = (speed * speed) / 2 - MU_EARTH / r;
+    this.emit(
+      "message",
+      `Your plan: trans-lunar injection in ${Math.round((this.tliStart - this.t) / 60)} min (${Math.round(plan.tliDvMs)} m/s)`,
+    );
+  }
+
   private planTli() {
+    if (this.plan) {
+      this.planTliFromPlan(this.plan);
+      return;
+    }
     const start: CoastState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
     const info = orbitInfo(start.r, start.v);
     const period = isFinite(info.period) ? info.period : 5400;
-    const samples = 160;
-    let best = { score: Infinity, t: Infinity, energy: Infinity };
-    let s = start;
-    const lead = 300; // never start in the next 5 minutes
-    s = advanceCoast(s, lead);
+    const { available } = this.tliBudget();
+    const maxDv = available * 0.94; // ~6% margin for finite-burn losses
+
+    // 1. For each transfer energy (apogee as a share of the Moon's distance), find when
+    //    to burn so the coast passes near the Moon.
+    const orbits = info.eccentricity > 0.02 ? 4 : 1.05;
+    const samples = Math.round(120 * Math.min(orbits, 2));
+    type Cand = { miss: number; s: CoastState; vNeeded: number; dv: number };
+    const perRa = new Map<number, Cand>();
+    let s = advanceCoast(start, 300);
     for (let k = 0; k < samples; k++) {
-      for (const raFactor of [0.95, 1.0, 1.06]) {
-        const r = vlen(s.r);
-        const ra = 384400000 * raFactor;
+      const r = vlen(s.r);
+      const speed = vlen(s.v);
+      for (const raFactor of TLI_APOGEE_FACTORS) {
+        const ra = MOON_DISTANCE * raFactor;
         const vNeeded = Math.sqrt(MU_EARTH * (2 / r - 2 / (r + ra)));
-        const v = vscale(vnorm(s.v), vNeeded);
-        const res = propagate({ t: s.t, r: s.r, v }, 6 * 86400, { stopAlt: -1e9, maxStep: 900 });
+        const dv = vNeeded - speed;
+        if (dv > maxDv) continue;
+        const res = propagate({ t: s.t, r: s.r, v: vscale(vnorm(s.v), vNeeded) }, 6 * 86400, { stopAlt: -1e9, maxStep: 900 });
         if (res.hitMoon) continue;
-        const score = Math.abs(res.minMoonDist - PERILUNE_TARGET);
-        if (score < best.score) best = { score, t: s.t, energy: (vNeeded * vNeeded) / 2 - MU_EARTH / r };
+        const miss = Math.abs(res.minMoonDist - PERILUNE_TARGET);
+        const prev = perRa.get(raFactor);
+        if (!prev || miss < prev.miss) perRa.set(raFactor, { miss, s, vNeeded, dv });
       }
-      s = advanceCoast(s, (period * 1.05) / samples);
+      s = advanceCoast(s, (period * orbits) / samples);
     }
-    // Finite burn: start half the burn time before the impulsive point.
-    const ve = this.stage2.data.ispVac * G0;
-    const dv = Math.sqrt(2 * (best.energy + MU_EARTH / vlen(this.r))) - vlen(this.v);
-    const m0 = this.mass;
-    const burnTime = (m0 * (1 - Math.exp(-dv / ve))) / (this.stage2.data.thrustVacN / ve);
-    this.tliStart = best.t - burnTime / 2;
-    this.tliEnergy = best.energy;
-    this.emit("message", `Trans-lunar injection planned in ${Math.round((this.tliStart - this.t) / 60)} min`);
+    if (perRa.size === 0) {
+      this.tliStart = Infinity;
+      this.emit("message", "No trans-lunar injection possible: the upper stage does not have enough propellant left.");
+      return;
+    }
+
+    // 2. At each of those departures, trim the burn so the Moon swings the spacecraft
+    //    straight back into the entry corridor (a free return), and keep the one that
+    //    gets the crew home within the mission's days for the least delta-v.
+    const maxDays = MISSION_REQUIREMENTS.durationDays;
+    let best: { score: number; c: Cand; dvTrim: number; days: number } | null = null;
+    for (const c of perRa.values()) {
+      const dir = vnorm(c.s.v);
+      const base: CoastState = { t: c.s.t, r: c.s.r, v: vscale(dir, c.vNeeded) };
+      const f = (d: number) => freeReturn(base, vscale(dir, d)).pe - RETURN_PERIGEE_TARGET;
+      let trim: number | null = null;
+      let prevD = -20;
+      let prevF = f(prevD);
+      for (let d = -19; d <= 20 && trim === null; d += 1) {
+        const fd = f(d);
+        if (isFinite(prevF) && isFinite(fd) && Math.abs(prevF) < 5e8 && Math.abs(fd) < 5e8 && Math.sign(fd) !== Math.sign(prevF)) {
+          let lo = prevD;
+          let hi = d;
+          let flo = prevF;
+          for (let i = 0; i < 12; i++) {
+            const mid = (lo + hi) / 2;
+            const fm = f(mid);
+            if (isFinite(fm) && Math.sign(fm) === Math.sign(flo)) {
+              lo = mid;
+              flo = fm;
+            } else hi = mid;
+          }
+          trim = (lo + hi) / 2;
+        }
+        prevD = d;
+        prevF = fd;
+      }
+      if (trim === null || c.dv + trim > maxDv) continue;
+      const days = (freeReturn(base, vscale(dir, trim)).t - this.t) / 86400;
+      const score = (c.dv + trim) / 25 + Math.max(0, days - (maxDays - 0.5)) * 20;
+      if (!best || score < best.score) best = { score, c, dvTrim: trim, days };
+    }
+
+    // No free return found: fall back to the departure that passes nearest the target,
+    // and let the course corrections do the rest.
+    const pick =
+      best ?? { c: [...perRa.values()].reduce((a, b) => (b.miss / 1e6 + b.dv / 25 < a.miss / 1e6 + a.dv / 25 ? b : a)), dvTrim: 0, days: NaN };
+    const vBurn = pick.c.vNeeded + pick.dvTrim;
+    const dv = pick.c.dv + pick.dvTrim;
+    const rB = vlen(pick.c.s.r);
+    // Finite burn: light up so that half the delta-v is in by the ideal burn point.
+    this.tliStart = pick.c.s.t - this.tliLeadTime(dv);
+    this.tliEnergy = (vBurn * vBurn) / 2 - MU_EARTH / rB;
+    this.emit(
+      "message",
+      `Trans-lunar injection planned in ${Math.round((this.tliStart - this.t) / 60)} min (${Math.round(dv)} m/s${
+        isFinite(pick.days) ? `, free return home in ${pick.days.toFixed(1)} days` : ""
+      })`,
+    );
   }
 
-  /** Prograde/retrograde correction that brings the return perigee down to ~45 km. */
+  /**
+   * Course correction that brings the return perigee into the entry corridor. Before the
+   * flyby a prograde burn is tried first and a sideways one (in the orbit plane) if that
+   * needs more; on the way home the sideways burn is the effective one.
+   */
   private planTcm() {
     const base: CoastState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
     const after = this.flybyPassed;
-    const f = (dv: number) => returnPerigee(base, dv, after) - RETURN_PERIGEE_TARGET;
-    let bestDv = 0;
-    let bestErr = Math.abs(f(0));
-    const span = after ? 15 : 60;
-    const step = after ? 1 : 4;
-    let prevDv = -span;
-    let prevF = f(prevDv);
-    for (let dv = -span + step; dv <= span; dv += step) {
-      const fv = f(dv);
-      if (Math.abs(fv) < bestErr) {
-        bestErr = Math.abs(fv);
-        bestDv = dv;
-      }
-      if (isFinite(fv) && isFinite(prevF) && Math.sign(fv) !== Math.sign(prevF)) {
-        let lo = prevDv;
-        let hi = dv;
-        let flo = prevF;
-        for (let i = 0; i < 30; i++) {
-          const mid = (lo + hi) / 2;
-          const fm = f(mid);
-          if (Math.sign(fm) === Math.sign(flo)) {
-            lo = mid;
-            flo = fm;
-          } else hi = mid;
-        }
-        const cand = (lo + hi) / 2;
-        if (Math.abs(cand) < Math.abs(bestDv) || bestErr > 5000) {
-          bestDv = cand;
-          bestErr = Math.abs(f(cand));
-        }
-      }
-      prevDv = dv;
-      prevF = fv;
-    }
-    this.tcmDv = bestDv;
+    const prograde = vnorm(this.v);
+    const sideways = vnorm(vcross(vcross(this.r, this.v), this.v));
+    const options = after ? [solveTcm(base, sideways, true)] : [solveTcm(base, prograde, false)];
+    if (!after && !(options[0].err < 50000 && Math.abs(options[0].dv) < 15)) options.push(solveTcm(base, sideways, false));
+    const good = options.filter((o) => o.err < 50000);
+    const pick = good.length
+      ? good.reduce((x, y) => (Math.abs(y.dv) < Math.abs(x.dv) ? y : x))
+      : options.reduce((x, y) => (y.err < x.err ? y : x));
+    this.tcmDir = pick.dir;
+    this.tcmDv = pick.dv;
   }
 
-  /** Predicted path for drawing, as ECI points. */
+  /**
+   * Predicted path for drawing, as ECI points. It ends where it meets the ground, so a
+   * climb that isn't in orbit yet is drawn as the arc it really is, not as an ellipse
+   * running through the Earth.
+   */
   predict(duration: number, points = 400): Vec3[] {
-    const res = propagate({ t: this.t, r: this.r, v: this.v }, duration, {
-      stopAlt: 0,
-      samplePoints: points,
-      maxStep: Math.max(30, duration / points),
-    });
-    return res.points ?? [];
+    let s: CoastState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
+    const end = this.t + duration;
+    const every = duration / points;
+    const maxStep = Math.max(30, every);
+    const out: Vec3[] = [vcopy(s.r)];
+    let next = s.t + every;
+    while (s.t < end && out.length < points + 2) {
+      s = coastRk4(s, Math.min(coastStep(s.r, s.v, s.t, maxStep), end - s.t));
+      const alt = vlen(s.r) - R_EARTH;
+      if (alt <= 0) {
+        // Finish exactly on the surface.
+        out.push(vscale(s.r, R_EARTH / vlen(s.r)));
+        return out;
+      }
+      if (s.t >= next) {
+        out.push(vcopy(s.r));
+        next += every;
+      }
+    }
+    out.push(vcopy(s.r));
+    return out;
   }
 
   /* -------------------------------------------------------------- inputs */
@@ -726,28 +988,95 @@ function advanceCoast(s: CoastState, seconds: number): CoastState {
   return st;
 }
 
-/** Vacuum perigee altitude of the return leg after applying dv along the velocity now. */
-function returnPerigee(base: CoastState, dv: number, afterFlyby = false): number {
-  let s: CoastState = { t: base.t, r: vcopy(base.r), v: vadd(base.v, vscale(vnorm(base.v), dv)) };
-  const end = base.t + 9 * 86400;
+/** Burn along `dir` (m/s, signed) that puts the return perigee on target, and how far off it ends up (m). */
+function solveTcm(base: CoastState, dir: Vec3, afterFlyby: boolean): { dir: Vec3; dv: number; err: number } {
+  // 1e9 means "never came back": treat it like NaN so it doesn't fake a sign change.
+  const f = (dv: number) => {
+    const pe = returnPerigee(base, vscale(dir, dv), afterFlyby);
+    return Math.abs(pe) < 5e8 ? pe - RETURN_PERIGEE_TARGET : NaN;
+  };
+  let bestDv = 0;
+  const f0 = f(0);
+  let bestErr = Number.isFinite(f0) ? Math.abs(f0) : Infinity;
+  // Before the flyby the return is extremely sensitive to small burns, so sample finely
+  // near zero and coarsely further out. After the flyby the response is smooth.
+  const samples: number[] = [];
+  if (afterFlyby) {
+    for (let dv = -150; dv <= 150; dv += 3) samples.push(dv);
+  } else {
+    for (let dv = -60; dv < -20; dv += 2) samples.push(dv);
+    for (let dv = -20; dv <= 20; dv += 0.5) samples.push(dv);
+    for (let dv = 22; dv <= 60; dv += 2) samples.push(dv);
+  }
+  let prevDv = samples[0];
+  let prevF = f(prevDv);
+  for (const dv of samples.slice(1)) {
+    const fv = f(dv);
+    if (Math.abs(fv) < bestErr) {
+      bestErr = Math.abs(fv);
+      bestDv = dv;
+    }
+    if (isFinite(fv) && isFinite(prevF) && Math.sign(fv) !== Math.sign(prevF)) {
+      let lo = prevDv;
+      let hi = dv;
+      let flo = prevF;
+      for (let i = 0; i < 30; i++) {
+        const mid = (lo + hi) / 2;
+        const fm = f(mid);
+        if (isFinite(fm) && Math.sign(fm) === Math.sign(flo)) {
+          lo = mid;
+          flo = fm;
+        } else hi = mid;
+      }
+      const cand = (lo + hi) / 2;
+      const err = Math.abs(f(cand));
+      if (isFinite(err) && (bestErr > 5000 || Math.abs(cand) < Math.abs(bestDv))) {
+        bestDv = cand;
+        bestErr = err;
+      }
+    }
+    prevDv = dv;
+    prevF = fv;
+  }
+  return { dir, dv: bestDv, err: bestErr };
+}
+
+/**
+ * The way home after applying dv now: vacuum perigee altitude and the time the
+ * spacecraft gets there. pe is NaN for a pass too close to the Moon or too far
+ * from it to swing round, 1e9 if it never comes back.
+ */
+export function freeReturn(base: CoastState, dv: Vec3, afterFlyby = false): { pe: number; t: number } {
+  let s: CoastState = { t: base.t, r: vcopy(base.r), v: vadd(base.v, dv) };
+  const end = base.t + 14 * 86400;
   let passedMoon = afterFlyby;
   let prevMoonDist = Infinity;
   while (s.t < end) {
-    s = coastRk4(s, coastStep(s.r, s.v, s.t, 900));
+    s = coastRk4(s, coastStep(s.r, s.v, s.t, 300));
     const m = moonPosition(s.t);
     const dm = Math.hypot(s.r.x - m.x, s.r.y - m.y, s.r.z - m.z);
-    if (dm < R_MOON + 50000) return -1e7; // too close to or into the Moon
+    if (dm < R_MOON + 250000) return { pe: NaN, t: s.t }; // passes too close to (or into) the Moon
     if (!passedMoon) {
-      if (dm > prevMoonDist && dm < 80000000) passedMoon = true;
+      if (dm > prevMoonDist && dm < 80000000) {
+        passedMoon = true;
+        // Only accept flybys that actually swing round the Moon (not a distant miss).
+        if (prevMoonDist > R_MOON + FREE_RETURN_MAX_PERILUNE) return { pe: NaN, t: s.t };
+      }
       prevMoonDist = dm;
       continue;
     }
     const r = vlen(s.r);
     if (r < 60000000 && vdot(s.r, s.v) < 0) {
       // Earth dominates from here: two-body perigee is a good estimate.
-      return orbitInfo(s.r, s.v).periapsisAlt;
+      const o = orbitInfo(s.r, s.v);
+      return { pe: o.periapsisAlt, t: s.t + (isFinite(o.timeToPeriapsis) ? o.timeToPeriapsis : 0) };
     }
   }
-  return 1e9; // never came back
+  return { pe: 1e9, t: end }; // never came back
+}
+
+/** Vacuum perigee altitude of the return leg after applying dv along the velocity now. */
+export function returnPerigee(base: CoastState, dv: Vec3, afterFlyby = false): number {
+  return freeReturn(base, dv, afterFlyby).pe;
 }
 

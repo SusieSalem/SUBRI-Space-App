@@ -1,12 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  isMuted,
-  playClick,
-  playPartSnap,
-  playRocketCheck,
-  subscribeMute,
-  toggleMute,
-} from "./audio/soundManager";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MISSION_REQUIREMENTS,
   PARTS,
@@ -16,11 +8,43 @@ import {
   type PartId,
 } from "./core/design";
 import { ROCKETS, ROCKETS_BY_ID, launchCheck, type RocketId } from "./core/launchCheck";
+import { DEFAULT_PLAN, type OrbitPlan } from "./core/orbitPlan";
 import { COUNTDOWN_S, FlightSim } from "./core/simulate";
-import FlightScene, { type Quality, type Telemetry, type WarpControl } from "./scenes/FlightScene";
+import { ARTEMIS2, artemisAltitudeAt } from "./core/artemis2";
+import {
+  DEFAULT_STORM_ID,
+  STORMS,
+  STORMS_BY_ID,
+  STORM_ONSET_S,
+  radiationScale,
+  stormLabel,
+  stormOutcome,
+  type StormResult,
+} from "./core/spaceWeather";
+import {
+  isMuted,
+  playAlert,
+  playClick,
+  playPartSnap,
+  playRocketCheck,
+  subscribeMute,
+  toggleMute,
+} from "./audio/soundManager";
+import type { Quality, Telemetry, WarpControl } from "./scenes/FlightScene";
 
-/** Step 1 is assembly on the pad; step 2 is the flight, in the same world. */
-type Mode = "assembly" | "flight";
+// The 3D scene and the planner are the heavy parts: load them as separate
+// chunks so the interface shows up while three.js is still downloading.
+const FlightScene = lazy(() => import("./scenes/FlightScene"));
+const OrbitPlanner = lazy(() => import("./components/OrbitPlanner"));
+
+/** Step 1 is assembly on the pad, step 2 plans the trip to the Moon, step 3 flies it, all in the same world. */
+type Mode = "assembly" | "planning" | "flight";
+
+const STEP_LABEL: Record<Mode, string> = {
+  assembly: "Step 1 of 3 / Assembly",
+  planning: "Step 2 of 3 / Orbit planning",
+  flight: "Step 3 of 3 / Launch and flight",
+};
 
 const CATEGORY_LABEL: Record<string, string> = {
   crew: "Crew",
@@ -54,19 +78,57 @@ function formatDistance(m: number) {
   return `${Math.round(m)} m`;
 }
 
+/** Mission time as "4d 22h" (or "5h 10m" under a day). */
+function formatMissionTime(s: number) {
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`;
+}
+
 function formatSpeed(ms: number) {
   return Math.abs(ms) >= 1000 ? `${(ms / 1000).toFixed(2)} km/s` : `${Math.round(ms)} m/s`;
+}
+
+function formatTimeOfDay(hours: number) {
+  const totalMinutes = Math.round((((hours % 24) + 24) % 24) * 60) % 1440;
+  const hh = Math.floor(totalMinutes / 60);
+  const mm = totalMinutes % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+function advanceDateAndTime(baseDateStr: string, baseHours: number, elapsedSec: number) {
+  const totalHours = baseHours + Math.max(0, elapsedSec) / 3600;
+  const dayOffset = Math.floor(totalHours / 24);
+  const displayTime = ((totalHours % 24) + 24) % 24;
+  if (dayOffset === 0) return { displayDate: baseDateStr, displayTime };
+  const parts = baseDateStr.split("-").map(Number);
+  const utc = Date.UTC(parts[0] || 2026, (parts[1] || 7) - 1, (parts[2] || 20) + dayOffset);
+  const d = new Date(utc);
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  return { displayDate: `${yyyy}-${mm}-${dd}`, displayTime };
 }
 
 export default function App() {
   const [mode, setMode] = useState<Mode>("assembly");
   const [parts, setParts] = useState<PartId[]>(["capsule", "serviceLarge", "lifeSupport7", "solarPanels"]);
   const [rocket, setRocket] = useState<RocketId>("heavy");
-  const [quality, setQuality] = useState<Quality>("high");
+  const [plan, setPlan] = useState<OrbitPlan>(DEFAULT_PLAN);
+  /** The plan the current flight is flying (null: the autopilot planned it). */
+  const [flownPlan, setFlownPlan] = useState<OrbitPlan | null>(null);
+  const [quality, setQuality] = useState<Quality>("low");
+  const [launchDate, setLaunchDate] = useState<string>("2026-07-20");
+  const [timeOfDay, setTimeOfDay] = useState<number>(8.6);
+  const [syncCycle, setSyncCycle] = useState<boolean>(true);
   const [mapView, setMapView] = useState(false);
   const [tel, setTel] = useState<Telemetry | null>(null);
   const [warpSetting, setWarpSetting] = useState<number | "auto">("auto");
   const [paused, setPaused] = useState(false);
+  /** A real DONKI storm replayed during the flight, or "none" for a quiet Sun. */
+  const [stormId, setStormId] = useState<string>(DEFAULT_STORM_ID);
+  const [stormResult, setStormResult] = useState<StormResult | null>(null);
   const simRef = useRef<FlightSim>(new FlightSim(rocket, parts));
   const warp = useRef<WarpControl>({ setting: "auto", paused: false });
   const keys = useRef(new Set<string>());
@@ -81,10 +143,12 @@ export default function App() {
   const overBudget = totalCost > MISSION_REQUIREMENTS.budgetMUsd;
   const blockers = issues.filter((i) => i.severity === "blocker");
   const canLaunch = blockers.length === 0 && check.fits && !overBudget;
+  const storm = STORMS_BY_ID[stormId] ?? null;
+  const stormIsDangerous = !!storm && radiationScale(storm.protonFluxPfu) >= 2;
 
-  // A fresh vehicle on the pad whenever the design changes during assembly.
+  // A fresh vehicle on the pad whenever the design changes before launch.
   useEffect(() => {
-    if (mode !== "assembly") return;
+    if (mode === "flight") return;
     simRef.current = new FlightSim(rocket, parts);
     setSimVersion((v) => v + 1);
   }, [rocket, parts, mode]);
@@ -94,20 +158,31 @@ export default function App() {
     warp.current.paused = paused;
   }, [warpSetting, paused]);
 
-  const launch = () => {
-    simRef.current = new FlightSim(rocket, parts);
+  const launch = (withPlan: OrbitPlan | null) => {
+    setFlownPlan(withPlan);
+    simRef.current = new FlightSim(rocket, parts, withPlan);
     setSimVersion((v) => v + 1);
     setWarpSetting("auto");
     setPaused(false);
     setMapView(false);
     setTel(null);
+    setStormResult(null);
     setMode("flight");
   };
-  const backToAssembly = () => {
-    setMode("assembly");
+  const backTo = (m: Mode) => {
+    setMode(m);
     setMapView(false);
     setTel(null);
+    setStormResult(null);
   };
+
+  // The storm reaches the spacecraft STORM_ONSET_S after liftoff, if the flight is still going.
+  useEffect(() => {
+    if (mode !== "flight" || !tel || !storm || stormResult) return;
+    if (tel.failed || tel.done || tel.t - COUNTDOWN_S < STORM_ONSET_S) return;
+    setStormResult(stormOutcome(storm, parts, tel.altitude));
+    playAlert("solar_storm");
+  }, [mode, tel, storm, stormResult, parts]);
 
   const stepWarp = useCallback(
     (dir: 1 | -1) => {
@@ -147,33 +222,73 @@ export default function App() {
 
   const onTelemetry = useCallback((x: Telemetry) => setTel(x), []);
 
+  // When syncCycle is enabled in flight, advance the displayed Date and Time-of-Day
+  // automatically with mission time (sim.t - COUNTDOWN_S).
+  const elapsedSimSec = mode === "flight" && syncCycle && tel ? Math.max(0, tel.t - COUNTDOWN_S) : 0;
+  const { displayDate, displayTime } = advanceDateAndTime(launchDate, timeOfDay, elapsedSimSec);
+
+  const handleDateChange = useCallback(
+    (newDate: string) => {
+      if (elapsedSimSec > 0) {
+        const dayOffset = Math.floor((timeOfDay + elapsedSimSec / 3600) / 24);
+        const parts = newDate.split("-").map(Number);
+        const utc = Date.UTC(parts[0] || 2026, (parts[1] || 7) - 1, (parts[2] || 20) - dayOffset);
+        const d = new Date(utc);
+        const yyyy = d.getUTCFullYear();
+        const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const dd = String(d.getUTCDate()).padStart(2, "0");
+        setLaunchDate(`${yyyy}-${mm}-${dd}`);
+      } else {
+        setLaunchDate(newDate);
+      }
+    },
+    [elapsedSimSec, timeOfDay],
+  );
+
+  const handleTimeChange = useCallback(
+    (newTime: number) => {
+      if (elapsedSimSec > 0) {
+        const elapsedHours = (elapsedSimSec / 3600) % 24;
+        setTimeOfDay(((newTime - elapsedHours) % 24 + 24) % 24);
+      } else {
+        setTimeOfDay(newTime);
+      }
+    },
+    [elapsedSimSec],
+  );
+
   return (
     <div className={`app mode-${mode}`}>
-      <FlightScene
-        version={simVersion}
-        simRef={simRef}
-        rocket={rocket}
-        parts={parts}
-        flying={mode === "flight"}
-        warp={warp}
-        keys={keys}
-        mapView={mapView}
-        quality={quality}
-        lookAt={lookAt}
-        onTelemetry={onTelemetry}
-      />
+      <Suspense fallback={<div className="scene-loading">Loading 3D scene…</div>}>
+        <FlightScene
+          version={simVersion}
+          simRef={simRef}
+          rocket={rocket}
+          parts={parts}
+          flying={mode === "flight"}
+          warp={warp}
+          keys={keys}
+          mapView={mapView}
+          quality={quality}
+          launchDate={launchDate}
+          timeOfDay={timeOfDay}
+          syncCycle={syncCycle}
+          lookAt={lookAt}
+          onTelemetry={onTelemetry}
+        />
+      </Suspense>
 
       <header className="topbar">
         <div className="brand">
           <span className="brand-name">Mission Architect</span>
           <span className="brand-sub">
-            {mode === "assembly" ? "Step 1 of 2 / Assembly" : "Step 2 of 2 / Launch and flight"} /{" "}
-            {MISSION_REQUIREMENTS.name}
+            {STEP_LABEL[mode]} / {MISSION_REQUIREMENTS.name}
           </span>
         </div>
         <div className="steps">
           <span className={`step ${mode === "assembly" ? "on" : "done"}`}>1 Assembly</span>
-          <span className={`step ${mode === "flight" ? "on" : ""}`}>2 Launch and flight</span>
+          <span className={`step ${mode === "planning" ? "on" : mode === "flight" ? "done" : ""}`}>2 Orbit plan</span>
+          <span className={`step ${mode === "flight" ? "on" : ""}`}>3 Launch and flight</span>
         </div>
       </header>
 
@@ -187,14 +302,10 @@ export default function App() {
                 <h3>{CATEGORY_LABEL[cat]}</h3>
                 {PARTS.filter((p) => p.category === cat).map((p) => (
                   <label key={p.id} className={`part ${parts.includes(p.id) ? "on" : ""}`}>
-                    <input
-                      type="checkbox"
-                      checked={parts.includes(p.id)}
-                      onChange={() => {
+                    <input type="checkbox" checked={parts.includes(p.id)} onChange={() => {
                         playPartSnap(!parts.includes(p.id));
                         setParts((s) => togglePart(s, p.id));
-                      }}
-                    />
+                      }} />
                     <span className="part-body">
                       <span className="part-name">{p.name}</span>
                       <span className="part-desc">{p.description}</span>
@@ -212,14 +323,10 @@ export default function App() {
               {ROCKETS.map((r) => {
                 const fits = launchCheck(t.massKg, r.id).fits;
                 return (
-                  <button
-                    key={r.id}
-                    className={`rocket ${rocket === r.id ? "on" : ""}`}
-                    onClick={() => {
+                  <button key={r.id} className={`rocket ${rocket === r.id ? "on" : ""}`} onClick={() => {
                       playRocketCheck(fits);
                       setRocket(r.id);
-                    }}
-                  >
+                    }}>
                     <span className="rocket-name">{r.name}</span>
                     <span className="mono small">{fmt.format(r.payloadToMoonKg)} kg</span>
                     <span className="mono small muted">${fmt.format(r.costMUsd)}M</span>
@@ -228,6 +335,33 @@ export default function App() {
                 );
               })}
             </div>
+            <h3>Space weather</h3>
+            <label className="storm-pick">
+              <span className="part-desc">A real solar storm from NASA's DONKI database hits on day 2 of the flight.</span>
+              <select value={stormId} onChange={(e) => setStormId(e.target.value)}>
+                {STORMS.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {stormLabel(s)}
+                  </option>
+                ))}
+                <option value="none">Quiet Sun (no storm)</option>
+              </select>
+              {storm && (
+                <span className="small">
+                  <span className={stormIsDangerous && !parts.includes("radiationShield") ? "bad" : "muted"}>
+                    {storm.title}.{" "}
+                    {stormIsDangerous
+                      ? parts.includes("radiationShield")
+                        ? "Dangerous proton flux; the storm shelter will protect the crew."
+                        : "Dangerous proton flux and no storm shelter on board."
+                      : "Little or no proton radiation."}
+                  </span>{" "}
+                  <a href={storm.sourceUrl} target="_blank" rel="noreferrer">
+                    DONKI record
+                  </a>
+                </span>
+              )}
+            </label>
           </aside>
 
           <aside className="panel right assembly">
@@ -280,13 +414,57 @@ export default function App() {
 
           <footer className="controls">
             <div className="buttons">
-              <button className="primary big" disabled={!canLaunch} onClick={launch}>
-                Launch
+              <button className="primary big" disabled={!canLaunch} onClick={() => {
+                playClick();
+                setMode("planning");
+              }}>
+                Plan the orbit
+              </button>
+              <button disabled={!canLaunch} onClick={() => {
+                playClick();
+                launch(null);
+              }} title="Skip planning: the autopilot picks the trajectory">
+                Launch with autopilot plan
               </button>
               <span className="why small">
                 {canLaunch
-                  ? "Ready. The crew is boarding. Drag to look around the rocket, scroll to zoom."
+                  ? "Ready. Next, plan the trip to the Moon. Drag to look around the rocket, scroll to zoom."
                   : "Fix the red items on the right before you can launch."}
+              </span>
+              <EnvironmentControls
+                launchDate={displayDate}
+                onDateChange={handleDateChange}
+                timeOfDay={displayTime}
+                onTimeChange={handleTimeChange}
+                syncCycle={syncCycle}
+                onSyncChange={setSyncCycle}
+              />
+              <AudioToggle />
+              <QualityToggle quality={quality} onChange={setQuality} />
+            </div>
+          </footer>
+        </>
+      )}
+
+      {mode === "planning" && (
+        <>
+          <Suspense fallback={<div className="scene-loading">Loading planner…</div>}>
+            <OrbitPlanner rocket={rocket} parts={parts} plan={plan} onChange={setPlan} />
+          </Suspense>
+          <footer className="controls">
+            <div className="buttons">
+              <button onClick={() => {
+                playClick();
+                backTo("assembly");
+              }}>Back to assembly</button>
+              <button className="primary big" onClick={() => {
+                playClick();
+                launch(plan);
+              }}>
+                Launch this plan
+              </button>
+              <span className="why small">
+                The autopilot flies the ascent and your burn. Small course corrections on the way are automatic.
               </span>
               <AudioToggle />
               <QualityToggle quality={quality} onChange={setQuality} />
@@ -318,37 +496,51 @@ export default function App() {
               <Bar label={`Fuel / ${tel.fuelName}`} fill={tel.fuel} />
               <Bar label="Throttle" fill={tel.throttle} />
             </div>
+            {storm && !stormResult && !tel.done && !tel.failed && (
+              <span className="small muted">
+                Space weather: a real storm ({storm.startTimeUtc.slice(0, 10)}) arrives at T+2d.
+              </span>
+            )}
+            {stormResult && (
+              <div className={`storm-alert ${stormResult.severity}`}>
+                <span className="storm-head">{stormResult.headline}</span>
+                <span className="small">{stormResult.explanation}</span>
+                <a className="small" href={stormResult.storm.sourceUrl} target="_blank" rel="noreferrer">
+                  Open the DONKI record
+                </a>
+                {tel.done && stormResult.outcome === "exposed" && (
+                  <span className="small bad">
+                    The capsule is home, but the crew's radiation dose makes this a failed mission.
+                  </span>
+                )}
+              </div>
+            )}
+            <ArtemisComparison tel={tel} />
             <span className={`small ${tel.autopilot ? "ok" : "warn"}`}>
               {tel.autopilot ? "Autopilot flying (press T or WASD to take over)" : "Manual control (press T for autopilot)"}
+            </span>
+            <span className="small muted">
+              {flownPlan
+                ? `Your plan: ${Math.round(flownPlan.parkingAltM / 1000)} km orbit, burn at ${flownPlan.phaseDeg.toFixed(1)}°, ${Math.round(flownPlan.tliDvMs)} m/s`
+                : "Trajectory chosen by the autopilot"}
             </span>
           </aside>
 
           <footer className="controls">
             <div className="buttons">
-              <button
-                onClick={() => {
-                  playClick();
-                  setPaused((p) => !p);
-                }}
-              >
-                {paused ? "Resume" : "Pause"}
-              </button>
-              <button
-                onClick={() => {
-                  playClick();
-                  backToAssembly();
-                }}
-              >
-                Back to assembly
-              </button>
+              <button onClick={() => {
+                playClick();
+                setPaused((p) => !p);
+              }}>{paused ? "Resume" : "Pause"}</button>
+              <button onClick={() => {
+                playClick();
+                backTo("planning");
+              }}>Edit plan</button>
               <div className="speed">
-                <button
-                  className={warpSetting === "auto" ? "on" : ""}
-                  onClick={() => {
-                    playClick();
-                    setWarpSetting("auto");
-                  }}
-                >
+                <button className={warpSetting === "auto" ? "on" : ""} onClick={() => {
+                playClick();
+                setWarpSetting("auto");
+              }}>
                   Auto
                 </button>
                 {WARP_LEVELS.map((w) => (
@@ -357,39 +549,36 @@ export default function App() {
                     className={warpSetting === w ? "on" : ""}
                     disabled={w > tel.maxWarp}
                     onClick={() => {
-                      playClick();
-                      setWarpSetting(w);
-                    }}
+                playClick();
+                setWarpSetting(w);
+              }}
                   >
                     {w >= 1000 ? `${w / 1000}k` : `${w}x`}
                   </button>
                 ))}
               </div>
-              <button
-                className={mapView ? "on" : ""}
-                onClick={() => {
-                  playClick();
-                  setMapView((m) => !m);
-                }}
-              >
+              <button className={mapView ? "on" : ""} onClick={() => {
+                playClick();
+                setMapView((m) => !m);
+              }}>
                 Map (M)
               </button>
-              <button
-                onClick={() => {
-                  playClick();
-                  look("earth");
-                }}
-              >
-                Look at Earth
-              </button>
-              <button
-                onClick={() => {
-                  playClick();
-                  look("moon");
-                }}
-              >
-                Look at Moon
-              </button>
+              <button onClick={() => {
+                playClick();
+                look("earth");
+              }}>Look at Earth</button>
+              <button onClick={() => {
+                playClick();
+                look("moon");
+              }}>Look at Moon</button>
+              <EnvironmentControls
+                launchDate={displayDate}
+                onDateChange={handleDateChange}
+                timeOfDay={displayTime}
+                onTimeChange={handleTimeChange}
+                syncCycle={syncCycle}
+                onSyncChange={setSyncCycle}
+              />
               <AudioToggle />
               <QualityToggle quality={quality} onChange={setQuality} />
             </div>
@@ -400,6 +589,66 @@ export default function App() {
           </footer>
         </>
       )}
+    </div>
+  );
+}
+
+/** The player's flight next to NASA's real Artemis II, on the same mission clock. */
+function ArtemisComparison({ tel }: { tel: Telemetry }) {
+  const missionT = tel.t - COUNTDOWN_S;
+  const artemisAlt = artemisAltitudeAt(missionT);
+  // The closest approach is known once the spacecraft has been moving away from the Moon for an hour.
+  const flybyDone = isFinite(tel.closestMoon) && tel.t - tel.closestMoonT > 3600 && tel.moonDistance > tel.closestMoon;
+  const km = (m: number) => `${fmt.format(Math.round(m / 1000))} km`;
+  const rows: { label: string; you: string; artemis: string }[] = [
+    {
+      label: "Closest to the Moon",
+      you: flybyDone ? `${km(tel.closestMoon)}, T+${formatMissionTime(tel.closestMoonT - COUNTDOWN_S)}` : "-",
+      artemis: `${fmt.format(ARTEMIS2.closestMoonAltitudeKm)} km, T+${formatMissionTime(ARTEMIS2.closestMoonMissionTimeS)}`,
+    },
+    {
+      label: "Farthest from Earth",
+      you: flybyDone ? km(tel.maxAltitude) : "-",
+      artemis: `${fmt.format(ARTEMIS2.maxEarthAltitudeKm)} km`,
+    },
+    {
+      label: "Entry interface",
+      you: isFinite(tel.entryT) ? `T+${formatMissionTime(tel.entryT - COUNTDOWN_S)}` : "-",
+      artemis: `T+${formatMissionTime(ARTEMIS2.entryInterfaceMissionTimeS)}`,
+    },
+  ];
+  return (
+    <div className="artemis-compare">
+      <span className="label">You vs NASA's Artemis II (real flight, April 2026)</span>
+      {artemisAlt !== null && !tel.done && (
+        <span className="small">
+          At T+{formatMissionTime(missionT)} Artemis II was {km(artemisAlt)} from Earth; you are {km(tel.altitude)}.
+        </span>
+      )}
+      <table className="small mono">
+        <thead>
+          <tr>
+            <th />
+            <th>You</th>
+            <th>Artemis II</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label}>
+              <td>{r.label}</td>
+              <td>{r.you}</td>
+              <td>{r.artemis}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <span className="small muted">
+        Orange line in the map (M): Artemis II's path, drawn round the game's Moon on your clock.{" "}
+        <a href={ARTEMIS2.sourceUrl} target="_blank" rel="noreferrer">
+          NASA ephemeris
+        </a>
+      </span>
     </div>
   );
 }
@@ -420,6 +669,60 @@ function Bar({ label, fill }: { label: string; fill: number }) {
       <div className="bar">
         <div className="bar-fill" style={{ width: `${Math.max(0, Math.min(1, fill)) * 100}%` }} />
       </div>
+    </div>
+  );
+}
+
+function EnvironmentControls({
+  launchDate,
+  onDateChange,
+  timeOfDay,
+  onTimeChange,
+  syncCycle,
+  onSyncChange,
+}: {
+  launchDate: string;
+  onDateChange: (d: string) => void;
+  timeOfDay: number;
+  onTimeChange: (t: number) => void;
+  syncCycle: boolean;
+  onSyncChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="env-controls">
+      <button
+        type="button"
+        className={`env-sync ${syncCycle ? "on" : ""}`}
+        onClick={() => onSyncChange(!syncCycle)}
+        title={
+          syncCycle
+            ? "Day/Night cycle advances with simulation speed (click to lock time of day)"
+            : "Time of day locked (click to sync with simulation speed)"
+        }
+      >
+        {syncCycle ? "Cycle" : "Locked"}
+      </button>
+      <label className="env-field" title="Calendar date (J2000 solar & lunar ephemeris)">
+        <span className="label">Date</span>
+        <input
+          type="date"
+          className="env-date mono"
+          value={launchDate}
+          onChange={(e) => e.target.value && onDateChange(e.target.value)}
+        />
+      </label>
+      <label className="env-field env-time" title="Local time of day (moves sun, moon & clouds)">
+        <span className="label">Time</span>
+        <input
+          type="range"
+          min={0}
+          max={24}
+          step={0.01}
+          value={timeOfDay}
+          onChange={(e) => onTimeChange(parseFloat(e.target.value))}
+        />
+        <span className="mono small env-clock">{formatTimeOfDay(timeOfDay)}</span>
+      </label>
     </div>
   );
 }

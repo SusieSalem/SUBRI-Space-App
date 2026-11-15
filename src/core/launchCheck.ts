@@ -1,23 +1,41 @@
 // Can the chosen rocket carry the spacecraft towards the Moon?
-//
-// TODO: payload and cost values are placeholders. Replace with sourced figures
-// for comparable real launchers and note where each number comes from.
+// Payload to the Moon and cost come from public/data/crewed_lunar.json.
+
+import { crewedRocket } from "./crewedData";
 
 export type RocketId = "light" | "medium" | "heavy";
 
 export interface Rocket {
   id: RocketId;
+  /** Short label for buttons. */
   name: string;
+  /** Full class name from the dataset, e.g. "Heavy (NASA SLS Block 1)". */
+  fullName: string;
+  realAnalog: string;
+  payloadNote?: string;
+  sourceLabel: string;
+  sourceUrl: string;
   /** Mass it can send on a trans-lunar trajectory. */
   payloadToMoonKg: number;
   costMUsd: number;
 }
 
-export const ROCKETS: Rocket[] = [
-  { id: "light", name: "Light", payloadToMoonKg: 9000, costMUsd: 150 }, // TODO: placeholder
-  { id: "medium", name: "Medium", payloadToMoonKg: 20000, costMUsd: 450 }, // TODO: placeholder
-  { id: "heavy", name: "Heavy", payloadToMoonKg: 27000, costMUsd: 1200 }, // TODO: placeholder
-];
+const SHORT_NAME: Record<RocketId, string> = { light: "Light", medium: "Medium", heavy: "Heavy" };
+
+export const ROCKETS: Rocket[] = (["light", "medium", "heavy"] as RocketId[]).map((id) => {
+  const d = crewedRocket(id);
+  return {
+    id,
+    name: SHORT_NAME[id],
+    fullName: d.name,
+    realAnalog: d.realAnalog,
+    payloadNote: d.payloadToMoonNote,
+    sourceLabel: d.sourceLabel,
+    sourceUrl: d.sourceUrl,
+    payloadToMoonKg: d.payloadToMoonKg,
+    costMUsd: d.costMUsd,
+  };
+});
 
 export const ROCKETS_BY_ID: Record<RocketId, Rocket> = Object.fromEntries(
   ROCKETS.map((r) => [r.id, r]),

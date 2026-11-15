@@ -9,7 +9,7 @@ Playable prototype in two steps, in one continuous world:
 1. **Assembly.** You start on the ground at the launch pad. The whole stack stands on the pad: rocket, crew spacecraft and escape tower. Pick parts and a rocket on the left and the stack updates live. The gauges on the right say whether it is ready.
 2. **Launch and flight.** The rocket flies under real physics from the pad to the Moon and back, and the camera stays with it the whole way. There are no scene changes or fades: the pad drops away, the sky darkens, the Earth curves below because the rocket is actually climbing.
 
-Part, rocket, and engine numbers in `src/core/` currently use `TODO` / `TODO-source` placeholders, while `public/data/crewed_lunar.json` holds sourced NASA Orion CM, ESA European Service Module (ESM), SLS Block 1, Falcon Heavy, and Vulcan Centaur specifications ready to wire in.
+Part, rocket, and engine numbers in `src/core/` are loaded from `public/data/crewed_lunar.json` (sourced NASA Orion CM, ESA European Service Module, SLS Block 1, Falcon 9 / Falcon Heavy and Vulcan Centaur figures, typed by `CrewedLunarDataset` in `src/types/mission.ts`). With them, the flight simulation flies the dataset's reference designs end to end: `crewed_flyby` on Medium and `crewed_min_orbit` / `crewed_full_artemis` on Heavy reach the Moon and splash down; Light reaches orbit but cannot send the capsule to the Moon.
 
 ### How the flight works
 
@@ -100,6 +100,7 @@ npx gltf-transform optimize in.glb out.glb --texture-compress webp
 | Vulcan Centaur Overview | ULA | BE-4 first stage and Centaur V Dual-RL10C reference parameters (`crewed_lunar.json`) | [ulalaunch.com/rockets/vulcan-centaur](https://www.ulalaunch.com/rockets/vulcan-centaur) |
 | Planetary fact sheets | NASA NSSDCA | Earth and Moon radius, GM and rotation period used by the orbit formulas | [nssdc.gsfc.nasa.gov/planetary/factsheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html) |
 | LRO & LCROSS Polar Volatiles | NASA GSFC | Permanently Shadowed Region ice targets (`public/data/moon/`) | [science.nasa.gov/mission/lro](https://science.nasa.gov/mission/lro/) |
+| Artemis II ephemeris | NASA JSC flight dynamics | Orion's real path on Artemis II (April 2026), from upper-stage separation to entry interface. Drawn in orange in the map view on the player's mission clock, with a "You vs Artemis II" table in the flight HUD: closest approach to the Moon (6,539 km), farthest from Earth (406,773 km) and entry time (`artemis2_trajectory.json`) | [nasa.gov/missions/artemis-ii/track-nasas-artemis-ii-mission-in-real-time](https://www.nasa.gov/missions/artemis-ii/track-nasas-artemis-ii-mission-in-real-time/) |
 | Blue Marble / Black Marble | NASA Earth Observatory | Earth day and night imagery references for the globe | [earthobservatory.nasa.gov](https://earthobservatory.nasa.gov/) |
 
 ### Challenge resources
@@ -138,6 +139,12 @@ All JSON catalogs in `public/data/` are generated and validated using Python 3 s
 uv run data-prep/build_all_data.py
 ```
 
+The Artemis II path is built from NASA's ephemeris file, kept in `data-prep/raw/`:
+
+```bash
+uv run data-prep/build_artemis2.py
+```
+
 To optionally refresh the archived FIRMS or DONKI snapshots from live NASA endpoints (use your own free key from [api.nasa.gov](https://api.nasa.gov/); `DEMO_KEY` only allows 10 requests an hour and a DONKI refresh needs 5):
 
 ```bash
@@ -161,11 +168,12 @@ src/
   types/
     mission.ts           Shared TypeScript contract across engine, 3D scenes, UI, and data
   core/
-    design.ts            Spacecraft parts, totals and design checks (placeholder numbers)
-    launchCheck.ts       Rockets and whether the spacecraft fits (placeholder numbers)
+    crewedData.ts        Loads crewed_lunar.json through the typed contract
+    design.ts            Spacecraft parts, totals and design checks (from crewed_lunar.json)
+    launchCheck.ts       Rockets and whether the spacecraft fits (from crewed_lunar.json)
     orbit.ts             Constants, gravity, atmosphere, orbit elements, trajectory propagator
     simulate.ts          Real-physics 50 Hz flight: vehicle, staging, autopilot, burn planning
-    vehicleData.ts       Stage and engine figures (placeholders, TODO-source)
+    vehicleData.ts       Stage and engine figures, launch abort system, ESM engine (from crewed_lunar.json)
   scenes/
     FlightScene.tsx      Continuous launch-to-Moon scene: floating origin, debris, smoke, orbit lines
     LaunchSite.tsx       Pad, service tower, buildings
