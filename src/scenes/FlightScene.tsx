@@ -177,7 +177,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     [],
   );
   const skyDefines = useMemo(
-    () => (quality === "high" ? { VIEW_STEPS: 12, LIGHT_STEPS: 4 } : { VIEW_STEPS: 6, LIGHT_STEPS: 2 }),
+    () => (quality === "high" ? { VIEW_STEPS: 6, LIGHT_STEPS: 2 } : { VIEW_STEPS: 4, LIGHT_STEPS: 2 }),
     [quality],
   );
 
@@ -409,7 +409,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       };
       const local = eciToEcef(nozzleEci, t);
       const pl = new THREE.Vector3(local.x - PAD_ECEF.x, local.y - PAD_ECEF.y, local.z - PAD_ECEF.z);
-      const n = Math.min(6, Math.ceil(realDt * warpNow * 60));
+      const n = Math.min(quality === "high" ? 6 : 2, Math.ceil(realDt * warpNow * (quality === "high" ? 60 : 20)));
       for (let i = 0; i < n; i++) {
         if (sim.altitude < 300) {
           const a = Math.random() * Math.PI * 2;
@@ -594,7 +594,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         intensity={3.4}
         color="#fff4e6"
         castShadow
-        shadow-mapSize={quality === "high" ? [2048, 2048] : [1024, 1024]}
+        shadow-mapSize={quality === "high" ? [1024, 1024] : [512, 512]}
         shadow-bias={-0.0004}
         shadow-normalBias={0.04}
         shadow-camera-left={-90}
@@ -646,18 +646,25 @@ export default function FlightScene(props: Props) {
       key={quality}
       shadows
       flat
-      dpr={quality === "high" ? [1, 1.5] : [0.75, 1]}
+      dpr={quality === "high" ? [0.75, 1] : [0.5, 0.75]}
       gl={{ antialias: false, logarithmicDepthBuffer: true, powerPreference: "high-performance" }}
       camera={{ position: [70, 30, 100], fov: 45, near: 0.5, far: 5e9 }}
     >
       <World {...props} />
       <ShadowSetup />
       <OrbitControls makeDefault enableDamping dampingFactor={0.08} minDistance={15} maxDistance={2e9} enablePan={false} zoomSpeed={1.4} />
-      <EffectComposer multisampling={quality === "high" ? 4 : 0}>
-        <Bloom intensity={0.6} luminanceThreshold={1.2} luminanceSmoothing={0.3} mipmapBlur />
-        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
-        <Vignette offset={0.25} darkness={0.55} />
-      </EffectComposer>
+      {quality === "high" ? (
+        <EffectComposer multisampling={0}>
+          <Bloom intensity={0.6} luminanceThreshold={1.2} luminanceSmoothing={0.3} mipmapBlur />
+          <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+          <Vignette offset={0.25} darkness={0.55} />
+        </EffectComposer>
+      ) : (
+        // Low: no bloom or vignette, just the tone mapping.
+        <EffectComposer multisampling={0}>
+          <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+        </EffectComposer>
+      )}
     </Canvas>
   );
 }
