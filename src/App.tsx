@@ -34,6 +34,7 @@ import { TutorialOverlay } from "./components/TutorialOverlay";
 import { ControlsHelp } from "./components/ControlsHelp";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { WarpControl as WarpStepper } from "./components/WarpControl";
+import type { WarpMode } from "./core/warp";
 import { ArrowLeftIcon, ChevronRightIcon, EarthIcon, MapIcon, MoonIcon, PauseIcon, PlayIcon } from "./components/icons";
 import type { Quality, Telemetry, WarpControl, WeatherState } from "./scenes/FlightScene";
 
@@ -132,7 +133,7 @@ export default function App() {
   const [syncCycle, setSyncCycle] = useState<boolean>(true);
   const [mapView, setMapView] = useState(false);
   const [tel, setTel] = useState<Telemetry | null>(null);
-  const [warpSetting, setWarpSetting] = useState<number | "auto">("auto");
+  const [warpSetting, setWarpSetting] = useState<number | WarpMode>("auto");
   const [paused, setPaused] = useState(false);
   /** A real DONKI storm replayed during the flight, or "none" for a quiet Sun. */
   const [stormId, setStormId] = useState<string>(DEFAULT_STORM_ID);
@@ -196,7 +197,7 @@ export default function App() {
   const stepWarp = useCallback(
     (dir: 1 | -1) => {
       setWarpSetting((w) => {
-        const cur = w === "auto" ? (tel?.warp ?? 1) : w;
+        const cur = typeof w === "number" ? w : (tel?.warp ?? 1);
         let i = WARP_LEVELS.findIndex((l) => l >= cur);
         if (i < 0) i = WARP_LEVELS.length - 1;
         return WARP_LEVELS[Math.max(0, Math.min(WARP_LEVELS.length - 1, i + dir))];
@@ -587,6 +588,10 @@ export default function App() {
                 onAuto={() => {
                   playClick();
                   setWarpSetting("auto");
+                }}
+                onTimelapse={() => {
+                  playClick();
+                  setWarpSetting("timelapse");
                 }}
                 onChange={(w) => {
                   playClick();

@@ -13,6 +13,9 @@ import { OrbitControls } from "@react-three/drei";
 import { Bloom, EffectComposer, ToneMapping, Vignette } from "@react-three/postprocessing";
 import { ToneMappingMode } from "postprocessing";
 import * as THREE from "three";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import type { PartId } from "../core/design";
 import type { RocketId } from "../core/launchCheck";
@@ -31,6 +34,7 @@ import {
   type Vec3,
 } from "../core/orbit";
 import { artemisPath } from "../core/artemis2";
+import { autoWarp, type WarpMode } from "../core/warp";
 import { COUNTDOWN_S, FlightSim, MOUNT_HEIGHT, PAD_ECEF, PHASE_LABEL, type PieceId as SimPieceId } from "../core/simulate";
 import {
   playAlert,
@@ -58,8 +62,8 @@ const WEATHER_VALUE: Record<WeatherState, number> = {
 };
 
 export interface WarpControl {
-  /** Requested warp, or "auto" to let the game pick. */
-  setting: number | "auto";
+  /** Requested warp, or "auto" / "timelapse" to let the game pick (src/core/warp.ts). */
+  setting: number | WarpMode;
   paused: boolean;
 }
 
@@ -141,17 +145,6 @@ function attitudeQuaternion(att: Vec3, out: THREE.Quaternion) {
 
 const sub = (a: Vec3, b: Vec3) => new THREE.Vector3(a.x - b.x, a.y - b.y, a.z - b.z);
 
-function autoWarp(sim: FlightSim): number {
-  const max = sim.maxWarp;
-  if (sim.phase === "parachutes") return Math.min(max, 20);
-  if (sim.phase === "entry") return Math.min(max, 3);
-  // Powered flight: real time down low, 4x once above most of the air.
-  if (max <= 4) return sim.altitude > 20000 || sim.phase === "tli" ? 4 : 1;
-  const tn = sim.timeToNextEvent;
-  if (!isFinite(tn)) return Math.min(max, 1000);
-  return Math.max(1, Math.min(max, tn / 5));
-}
-
 /* ------------------------------------------------------------- the world */
 
 interface Debris {
@@ -231,13 +224,51 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   );
 
   // Predicted path and the Moon's orbit, drawn in ECI relative to an anchor point.
+  // The path is a thick line (constant width on screen) over a dark outline, so it stays
+  // readable against the blue Earth at any zoom.
   const pathLine = useMemo(() => {
+    const g = new LineGeometry();
+    g.setPositions(new Float32Array(3 * 600)); // fixed buffer, updated in place below
+    const halo = new Line2(g, new LineMaterial({ color: "#02060c", linewidth: 7, transparent: true, opacity: 0.6, depthWrite: false }));
+    const line = new Line2(g, new LineMaterial({ color: "#6fe3ff", linewidth: 3, transparent: true, depthWrite: false }));
+    halo.frustumCulled = line.frustumCulled = false;
+    halo.renderOrder = 1;
+    line.renderOrder = 2;
+    halo.visible = line.visible = false;
+    return { g, halo, line };
+  }, []);
+  // A marker that keeps the same size on screen, so the spacecraft can be found when zoomed out.
+  const craftMarker = useMemo(() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const ctx = c.getContext("2d")!;
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "rgba(2,6,12,0.75)";
+    ctx.beginPath();
+    ctx.arc(32, 32, 22, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(32, 32, 7, 0, Math.PI * 2);
+    ctx.fill();
     const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3 * 600), 3));
-    g.setDrawRange(0, 0);
-    const line = new THREE.Line(g, new THREE.LineBasicMaterial({ color: "#5fa8ff", transparent: true, opacity: 0.85 }));
-    line.frustumCulled = false;
-    return line;
+    g.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0], 3));
+    const m = new THREE.PointsMaterial({
+      size: 26,
+      sizeAttenuation: false,
+      map: new THREE.CanvasTexture(c),
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const pts = new THREE.Points(g, m);
+    pts.frustumCulled = false;
+    pts.renderOrder = 1000;
+    pts.visible = false;
+    return pts;
   }, []);
   const moonLine = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -312,7 +343,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     const w = warp.current;
     let warpNow = 0;
     if (flying && !w.paused) {
-      warpNow = w.setting === "auto" ? autoWarp(sim) : Math.min(w.setting, sim.maxWarp);
+      warpNow = typeof w.setting === "number" ? Math.min(w.setting, sim.maxWarp) : autoWarp(sim, w.setting);
       sim.advance(realDt * warpNow);
       smoke.time.value += realDt * warpNow;
     }
@@ -632,6 +663,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     const camDist = camera.position.distanceTo(controls?.target ?? camera.position);
     const showLines = mapView || camDist > 30000;
     if (linesRef.current) linesRef.current.visible = showLines && flying;
+    craftMarker.visible = showLines && flying && !sim.onPad;
     const now = performance.now();
     if (flying && showLines && now - lastPredict.current > 500 && !sim.onPad) {
       lastPredict.current = now;
@@ -639,11 +671,20 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       const horizon = isFinite(orbit.period) && orbit.apoapsisAlt < 1e8 ? orbit.period * 1.02 : 9 * 86400;
       const pts = sim.predict(Math.min(horizon, 9 * 86400), 590);
       anchor.current = { ...sim.r };
-      const arr = pathLine.geometry.attributes.position.array as Float32Array;
-      pts.forEach((p, i) => arr.set([p.x - anchor.current.x, p.y - anchor.current.y, p.z - anchor.current.z], i * 3));
-      pathLine.geometry.setDrawRange(0, pts.length);
-      pathLine.geometry.attributes.position.needsUpdate = true;
-      pathLine.geometry.computeBoundingSphere();
+      const n = Math.min(pts.length, 600);
+      if (n >= 2) {
+        // Segment i is [start xyz, end xyz] in one interleaved buffer.
+        const seg = pathLine.g.attributes.instanceStart as THREE.InterleavedBufferAttribute;
+        const arr = seg.data.array as Float32Array;
+        const ax = anchor.current.x, ay = anchor.current.y, az = anchor.current.z;
+        for (let i = 0; i < n - 1; i++) {
+          const p = pts[i], q = pts[i + 1];
+          arr.set([p.x - ax, p.y - ay, p.z - az, q.x - ax, q.y - ay, q.z - az], i * 6);
+        }
+        seg.data.needsUpdate = true;
+        pathLine.g.instanceCount = n - 1;
+        pathLine.halo.visible = pathLine.line.visible = true;
+      }
       const marr = moonLine.geometry.attributes.position.array as Float32Array;
       for (let i = 0; i <= 256; i++) {
         const mp = moonPosition(t + (i / 256) * 27.3 * 86400);
@@ -726,8 +767,10 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         </group>
       </group>
 
+      <primitive object={craftMarker} />
       <group ref={linesRef}>
-        <primitive object={pathLine} />
+        <primitive object={pathLine.halo} />
+        <primitive object={pathLine.line} />
         <primitive object={moonLine} />
         <primitive object={artemis.line} />
       </group>
