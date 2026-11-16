@@ -1009,14 +1009,19 @@ export class FlightSim {
    * climb that isn't in orbit yet is drawn as the arc it really is, not as an ellipse
    * running through the Earth.
    */
-  predict(duration: number, points = 400): Vec3[] {
+  predict(duration: number, points = 1400): Vec3[] {
     let s: CoastState = { t: this.t, r: vcopy(this.r), v: vcopy(this.v) };
     const end = this.t + duration;
-    const every = duration / points;
+    // Points are spaced in time on the long straight stretches, and also wherever the path
+    // bends (a point every TURN radians of heading), so a fast low pass round the Earth is
+    // drawn as a smooth curve and not as a few long chords.
+    const every = duration / 400;
+    const TURN = 0.012;
     const maxStep = Math.max(30, every);
     const out: Vec3[] = [vcopy(s.r)];
     let next = s.t + every;
-    while (s.t < end && out.length < points + 2) {
+    let lastV = vcopy(s.v);
+    while (s.t < end && out.length < points) {
       s = coastRk4(s, Math.min(coastStep(s.r, s.v, s.t, maxStep), end - s.t));
       const alt = vlen(s.r) - R_EARTH;
       if (alt <= 0) {
@@ -1024,9 +1029,11 @@ export class FlightSim {
         out.push(vscale(s.r, R_EARTH / vlen(s.r)));
         return out;
       }
-      if (s.t >= next) {
+      const cosTurn = (s.v.x * lastV.x + s.v.y * lastV.y + s.v.z * lastV.z) / (vlen(s.v) * vlen(lastV));
+      if (s.t >= next || cosTurn < Math.cos(TURN)) {
         out.push(vcopy(s.r));
-        next += every;
+        lastV = vcopy(s.v);
+        next = s.t + every;
       }
     }
     out.push(vcopy(s.r));

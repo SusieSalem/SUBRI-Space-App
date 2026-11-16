@@ -255,7 +255,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   // readable against the blue Earth at any zoom.
   const pathLine = useMemo(() => {
     const g = new LineGeometry();
-    g.setPositions(new Float32Array(3 * 600)); // fixed buffer, updated in place below
+    g.setPositions(new Float32Array(3 * 1500)); // fixed buffer, updated in place below
     const halo = new Line2(g, new LineMaterial({ color: "#02060c", linewidth: 7, transparent: true, opacity: 0.6, depthWrite: false }));
     const line = new Line2(g, new LineMaterial({ color: "#6fe3ff", linewidth: 3, transparent: true, depthWrite: false }));
     halo.frustumCulled = line.frustumCulled = false;
@@ -990,9 +990,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       lastPredict.current = now;
       const orbit = sim.orbit();
       const horizon = isFinite(orbit.period) && orbit.apoapsisAlt < 1e8 ? orbit.period * 1.02 : 9 * 86400;
-      const pts = sim.predict(Math.min(horizon, 9 * 86400), 590);
+      const pts = sim.predict(Math.min(horizon, 9 * 86400), 1400);
       anchor.current = { ...sim.r };
-      const n = Math.min(pts.length, 600);
+      const n = Math.min(pts.length, 1500);
       if (n >= 2) {
         // Segment i is [start xyz, end xyz] in one interleaved buffer.
         const seg = pathLine.g.attributes.instanceStart as THREE.InterleavedBufferAttribute;

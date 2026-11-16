@@ -24,8 +24,11 @@ ${vertexHead}
 varying vec3 vDir;
 void main() {
   vDir = position;
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  gl_Position = projectionMatrix * viewMatrix * wp;
+  // This sphere follows the camera, which can be 1e8..2e9 m from the origin. Multiplying by
+  // modelMatrix and then viewMatrix would add and cancel two numbers that big in float32
+  // (steps of 8..256 m on a sphere of radius 1000), so the sky jumped around when the camera
+  // moved far out. modelViewMatrix is built in double precision on the CPU, where they cancel.
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   ${vertexTail}
 }
 `;
