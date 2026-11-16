@@ -273,8 +273,9 @@ export class FlightSim {
   /** Largest time warp allowed right now. */
   get maxWarp(): number {
     if (this.phase === "splashdown" || this.phase === "failed") return 1;
-    if (this.phase === "parachutes") return 50;
-    if (this.onPad || this.throttle > 0 || this.altitude < ATMOSPHERE_TOP) return 4;
+    if (this.phase === "parachutes") return 200;
+    // Fixed 50 Hz physics steps here, so a higher warp only costs more steps per frame.
+    if (this.onPad || this.throttle > 0 || this.altitude < ATMOSPHERE_TOP) return 100;
     return 100000;
   }
   /** Time until the next thing the autopilot will do (for auto warp). */

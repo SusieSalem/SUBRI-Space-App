@@ -6,9 +6,9 @@ function formatWarp(w: number) {
 }
 
 /**
- * Time warp in one capsule: [Auto | ‹ 4x ›].
- * In auto mode the number shows the warp the sim is using; stepping starts from there
- * (like the , . keys) and switches Auto off.
+ * Time warp in one capsule: [Auto | Timelapse | ‹ 4x ›].
+ * In auto or timelapse mode the number shows the warp the sim is using; stepping starts
+ * from there (like the , . keys) and switches the automatic mode off.
  */
 export function WarpControl({
   levels,
@@ -16,18 +16,21 @@ export function WarpControl({
   effective,
   maxWarp,
   onAuto,
+  onTimelapse,
   onChange,
 }: {
   levels: readonly number[];
-  setting: number | "auto";
+  setting: number | "auto" | "timelapse";
   /** Warp currently applied by the sim (telemetry). */
   effective: number;
   maxWarp: number;
   onAuto: () => void;
+  onTimelapse: () => void;
   onChange: (w: number) => void;
 }) {
   const auto = setting === "auto";
-  const cur = auto ? effective : setting;
+  const timelapse = setting === "timelapse";
+  const cur = typeof setting === "number" ? setting : effective;
   let i = levels.findIndex((l) => l >= cur);
   if (i < 0) i = levels.length - 1;
   const prev = i > 0 ? levels[i - 1] : undefined;
@@ -45,6 +48,15 @@ export function WarpControl({
       >
         Auto
       </button>
+      <button
+        type="button"
+        className={`warp-auto ${timelapse ? "on" : ""}`}
+        aria-pressed={timelapse}
+        title="Timelapse: the whole mission in about two minutes"
+        onClick={onTimelapse}
+      >
+        Timelapse
+      </button>
       <span className="warp-divider" aria-hidden="true" />
       <button
         type="button"
@@ -55,7 +67,7 @@ export function WarpControl({
       >
         <ChevronLeftIcon />
       </button>
-      <output className="warp-value mono" aria-live={auto ? "off" : "polite"}>
+      <output className="warp-value mono" aria-live={typeof setting === "number" ? "polite" : "off"}>
         {formatWarp(cur)}
       </output>
       <button
