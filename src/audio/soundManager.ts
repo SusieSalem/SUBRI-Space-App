@@ -91,6 +91,8 @@ class SoundManager {
   private musicEnabled: boolean = false;
   private voiceEnabled: boolean = true;
   private tabHidden: boolean = false;
+  private activeAiAudio: HTMLAudioElement | null = null;
+  private pendingAiUrl: string | null = null;
 
   private listeners: Set<MuteListener> = new Set();
   private settingsListeners: Set<SettingsListener> = new Set();
@@ -120,14 +122,26 @@ class SoundManager {
       document.addEventListener("visibilitychange", () => {
         this.tabHidden = document.hidden;
         if (this.tabHidden) {
-          this.ctx?.suspend().catch(() => {});
+          this.ctx?.suspend().catch(() => { });
+          this.stopAiVoice();
           if ("speechSynthesis" in window) {
             window.speechSynthesis.cancel();
           }
         } else if (!this.muted && this.ctx && this.ctx.state === "suspended") {
-          this.ctx.resume().catch(() => {});
+          this.ctx.resume().catch(() => { });
         }
       });
+
+      // Retry initial AI welcome voice if browser blocked unmuted autoplay before first gesture
+      const unlockAi = () => {
+        if (this.pendingAiUrl) {
+          const url = this.pendingAiUrl;
+          this.pendingAiUrl = null;
+          this.playAiVoice(url);
+        }
+      };
+      window.addEventListener("pointerdown", unlockAi, { passive: true });
+      window.addEventListener("keydown", unlockAi, { passive: true });
     }
   }
 
@@ -144,7 +158,7 @@ class SoundManager {
       this.masterGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === "suspended" && !this.tabHidden) {
-      this.ctx.resume().catch(() => {});
+      this.ctx.resume().catch(() => { });
     }
     return this.ctx;
   }
@@ -191,6 +205,7 @@ class SoundManager {
       }
       this.stopFlightAudio();
       this.stopMusicNodes();
+      this.stopAiVoice();
       if (typeof window !== "undefined" && "speechSynthesis" in window) {
         window.speechSynthesis.cancel();
       }
@@ -238,6 +253,9 @@ class SoundManager {
         0.03,
       );
     }
+    if (this.activeAiAudio) {
+      this.activeAiAudio.volume = this.muted ? 0 : Math.min(1, this.volume * 0.95);
+    }
     if (typeof window !== "undefined") {
       try {
         window.localStorage.setItem(STORAGE_KEY_VOLUME, String(this.volume));
@@ -281,8 +299,11 @@ class SoundManager {
 
   public setVoiceEnabled(enabled: boolean): boolean {
     this.voiceEnabled = enabled;
-    if (!enabled && typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+    if (!enabled) {
+      this.stopAiVoice();
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
     }
     if (typeof window !== "undefined") {
       try {
@@ -392,6 +413,45 @@ class SoundManager {
       // Ignore
     }
     this.musicNodes = null;
+  }
+
+  public stopAiVoice(): void {
+    this.pendingAiUrl = null;
+    if (this.activeAiAudio) {
+      try {
+        this.activeAiAudio.pause();
+        this.activeAiAudio.currentTime = 0;
+      } catch {
+        // Ignore
+      }
+      this.activeAiAudio = null;
+    }
+  }
+
+  public playAiVoice(url: string): void {
+    this.stopAiVoice();
+    if (this.muted || !this.voiceEnabled || this.tabHidden || typeof window === "undefined") return;
+    try {
+      const audio = new Audio(url);
+      audio.volume = Math.min(1, Math.max(0.05, this.volume * 0.95));
+      this.activeAiAudio = audio;
+      audio.addEventListener("ended", () => {
+        if (this.activeAiAudio === audio) {
+          this.activeAiAudio = null;
+        }
+      });
+      const p = audio.play();
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {
+          if (this.activeAiAudio === audio) {
+            this.activeAiAudio = null;
+            this.pendingAiUrl = url;
+          }
+        });
+      }
+    } catch {
+      // Ignore playback errors
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1134,7 +1194,7 @@ class SoundManager {
 
     const ctx = this.getContext();
     const dest = this.getDestination();
-    if (!ctx || !dest) return () => {};
+    if (!ctx || !dest) return () => { };
 
     const now = ctx.currentTime;
     const sampleRate = ctx.sampleRate;
@@ -1355,6 +1415,8 @@ export const subscribeMute = (listener: MuteListener) => soundManager.subscribe(
 export const subscribeAudioSettings = (listener: SettingsListener) =>
   soundManager.subscribeSettings(listener);
 export const speakCallout = (text: string) => soundManager.speakCallout(text);
+export const playAiVoice = (url: string) => soundManager.playAiVoice(url);
+export const stopAiVoice = () => soundManager.stopAiVoice();
 export const playClick = () => soundManager.playClick();
 export const playPartSnap = (added?: boolean) => soundManager.playPartSnap(added);
 export const playStageSeparation = (piece?: StagePieceSound) =>

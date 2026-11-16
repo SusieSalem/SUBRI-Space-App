@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { playAiVoice, stopAiVoice } from "../audio/soundManager";
 import type { Telemetry, WeatherState } from "../scenes/FlightScene";
 import aiIcon from "../ui/AI assets/AI Icon.png";
 import aiFront1 from "../ui/AI assets/AI front1.png";
@@ -33,6 +34,7 @@ interface TutorialStep {
   targetSelector: string | null;
   placement: "center" | "right" | "left" | "top";
   emotion?: "front" | "happy";
+  voiceClip?: string;
 }
 
 const EARTH_STEPS: TutorialStep[] = [
@@ -43,6 +45,7 @@ const EARTH_STEPS: TutorialStep[] = [
     targetSelector: null,
     placement: "center",
     emotion: "happy",
+    voiceClip: "/audio/voice/earth_ai/earth_welcome.mp3",
   },
   {
     id: "parts",
@@ -50,6 +53,7 @@ const EARTH_STEPS: TutorialStep[] = [
     text: "Choose your Crew Module, Heat Shield, and Avionics. Each part changes total mass, crew capacity, and how well your ship survives reentry and orbital flight.",
     targetSelector: ".panel.left",
     placement: "right",
+    voiceClip: "/audio/voice/earth_ai/earth_parts.mp3",
   },
   {
     id: "rocket",
@@ -57,6 +61,7 @@ const EARTH_STEPS: TutorialStep[] = [
     text: "Pick a rocket booster. Heavy rockets lift more payload mass into orbit, while lighter rockets cost less thrust margin if your spacecraft stays light.",
     targetSelector: ".rockets",
     placement: "right",
+    voiceClip: "/audio/voice/earth_ai/earth_rocket.mp3",
   },
   {
     id: "readiness",
@@ -64,6 +69,7 @@ const EARTH_STEPS: TutorialStep[] = [
     text: "These bars check your mass budget, delta-v, crew, and safety systems. Every item must turn green before flight clearance is granted.",
     targetSelector: ".panel.right.assembly",
     placement: "left",
+    voiceClip: "/audio/voice/earth_ai/earth_readiness.mp3",
   },
   {
     id: "environment",
@@ -71,6 +77,7 @@ const EARTH_STEPS: TutorialStep[] = [
     text: "Open the gear menu to set launch weather (Clear, Cloudy, Rain, or Storm), date, time of day, audio, and graphics quality.",
     targetSelector: ".controls .popover-anchor",
     placement: "top",
+    voiceClip: "/audio/voice/earth_ai/earth_settings.mp3",
   },
   {
     id: "launch",
@@ -79,6 +86,7 @@ const EARTH_STEPS: TutorialStep[] = [
     targetSelector: ".controls .primary.big",
     placement: "top",
     emotion: "happy",
+    voiceClip: "/audio/voice/earth_ai/earth_ready_step.mp3",
   },
 ];
 
@@ -90,6 +98,7 @@ const PLANNING_STEPS: TutorialStep[] = [
     targetSelector: null,
     placement: "center",
     emotion: "happy",
+    voiceClip: "/audio/voice/earth_ai/plan_welcome.mp3",
   },
   {
     id: "plan-maneuver",
@@ -119,6 +128,7 @@ const PLANNING_STEPS: TutorialStep[] = [
     targetSelector: ".controls .primary.big",
     placement: "top",
     emotion: "happy",
+    voiceClip: "/audio/voice/earth_ai/plan_launch.mp3",
   },
 ];
 
@@ -530,6 +540,7 @@ interface MilestoneNotice {
   title: string;
   text: string;
   emotion?: "happy" | "sad" | "front";
+  voiceClip?: string;
 }
 
 interface TutorialOverlayProps {
@@ -665,6 +676,7 @@ export function TutorialOverlay({
     seenMilestonesRef.current.clear();
     clearAutoCloseTimer();
     clearSpontaneousTimer();
+    stopAiVoice();
     if (moveTimerRef.current !== null) {
       window.clearTimeout(moveTimerRef.current);
       moveTimerRef.current = null;
@@ -714,6 +726,7 @@ export function TutorialOverlay({
   const handleClose = useCallback(() => {
     if (closingToAfk || !open) return;
     clearAutoCloseTimer();
+    stopAiVoice();
     if (persona === "earth") {
       setHasSeenTutorial(true);
     } else if (persona === "planning") {
@@ -794,6 +807,7 @@ export function TutorialOverlay({
             title: "Stormy Skies Overhead",
             text: "Lightning is flashing near the pad! You can switch weather anytime in the bottom bar.",
             emotion: "sad",
+            voiceClip: "/audio/voice/earth_ai/earth_storm.mp3",
           });
         } else if (canLaunch) {
           triggerAutoNotice({
@@ -801,6 +815,7 @@ export function TutorialOverlay({
             title: "Rocket Looking Great",
             text: "All launch gauges are green! Hit Plan the orbit whenever you're ready to fly.",
             emotion: "happy",
+            voiceClip: "/audio/voice/earth_ai/earth_cleared.mp3",
           });
         } else {
           const fact = SPACE_FACTS[count % SPACE_FACTS.length];
@@ -846,6 +861,7 @@ export function TutorialOverlay({
         title: "Ready for Launch",
         text: "Every gauge is green! Hit Plan the orbit or Launch with autopilot plan whenever you're ready.",
         emotion: "happy",
+        voiceClip: "/audio/voice/earth_ai/earth_cleared.mp3",
       });
     }
   }, [persona, canLaunch, open, closingToAfk, triggerAutoNotice]);
@@ -866,6 +882,7 @@ export function TutorialOverlay({
         title: "Storm at the Launch Pad",
         text: "Heavy storm clouds and lightning are active at the pad — launch conditions may be hazardous!",
         emotion: "sad",
+        voiceClip: "/audio/voice/earth_ai/earth_storm.mp3",
       });
     }
   }, [persona, weather, open, closingToAfk, triggerAutoNotice]);
@@ -892,6 +909,7 @@ export function TutorialOverlay({
         title: "Mission Failed",
         text: telemetry.message || "Something went wrong on this flight. Review telemetry and try another run.",
         emotion: "sad",
+        voiceClip: "/audio/voice/space_ai/space_failed_sad.mp3",
       });
     } else if (stormExposed) {
       triggerOnce("stormExposed", {
@@ -899,6 +917,7 @@ export function TutorialOverlay({
         title: "Crew Exposed to Storm",
         text: "The solar storm hit without a Radiation Storm Shelter. Add shielding in Assembly next time!",
         emotion: "sad",
+        voiceClip: "/audio/voice/space_ai/space_radiation_sad.mp3",
       });
     } else if (telemetry.done) {
       triggerOnce("done", {
@@ -906,6 +925,7 @@ export function TutorialOverlay({
         title: "Mission Complete!",
         text: "Welcome home, commander! Splashdown achieved — outstanding flight.",
         emotion: "happy",
+        voiceClip: "/audio/voice/space_ai/space_complete.mp3",
       });
     } else if (telemetry.moonDistance < 60_000_000) {
       triggerOnce("moon", {
@@ -913,6 +933,7 @@ export function TutorialOverlay({
         title: "Lunar Approach!",
         text: "You've reached the Moon's neighborhood! Watch your periapsis in Map View (M).",
         emotion: "happy",
+        voiceClip: "/audio/voice/space_ai/space_moon.mp3",
       });
     } else if (
       telemetry.altitude >= 100_000 &&
@@ -924,6 +945,7 @@ export function TutorialOverlay({
         title: "Orbit Achieved!",
         text: "You're in stable orbit — falling around Earth at orbital velocity!",
         emotion: "happy",
+        voiceClip: "/audio/voice/space_ai/space_orbit.mp3",
       });
     } else if (telemetry.altitude >= 100_000) {
       triggerOnce("karman", {
@@ -931,9 +953,62 @@ export function TutorialOverlay({
         title: "Karman Line Crossed!",
         text: "100 km altitude reached — welcome to outer space!",
         emotion: "happy",
+        voiceClip: "/audio/voice/space_ai/space_karman.mp3",
       });
     }
   }, [persona, telemetry, stormExposed, open, closingToAfk, triggerAutoNotice]);
+
+  // Play pre-recorded Fish Audio voice lines matching the active AI state
+  useEffect(() => {
+    if (!open || closingToAfk) {
+      stopAiVoice();
+      return;
+    }
+
+    if (autoNotice) {
+      if (autoNotice.voiceClip) playAiVoice(autoNotice.voiceClip);
+      else stopAiVoice();
+      return;
+    }
+
+    if (persona === "earth" || persona === "planning") {
+      if (earthMode === "tutorial") {
+        if (earthStep.voiceClip) playAiVoice(earthStep.voiceClip);
+        else stopAiVoice();
+      } else if (earthMode === "menu" && persona === "earth") {
+        playAiVoice("/audio/voice/earth_ai/earth_menu.mp3");
+      } else if (earthMode === "weather" && weather === "storm") {
+        playAiVoice("/audio/voice/earth_ai/earth_storm.mp3");
+      } else if (earthMode === "check" && canLaunch) {
+        playAiVoice("/audio/voice/earth_ai/earth_cleared.mp3");
+      } else if (earthMode === "trivia" && triviaPick === null) {
+        playAiVoice("/audio/voice/space_ai/space_trivia_ask.mp3");
+      } else if (earthMode !== "trivia") {
+        stopAiVoice();
+      }
+      return;
+    }
+
+    if (persona === "space") {
+      if (spaceTab === "trivia" && triviaPick === null) {
+        playAiVoice("/audio/voice/space_ai/space_trivia_ask.mp3");
+      } else if (spaceTab !== "trivia") {
+        stopAiVoice();
+      }
+    }
+  }, [
+    open,
+    closingToAfk,
+    autoNotice,
+    persona,
+    earthMode,
+    earthStep.voiceClip,
+    spaceTab,
+    triviaIndex,
+    triviaPick,
+    weather,
+    canLaunch,
+  ]);
 
   const isGround = persona === "earth" || persona === "planning";
 
@@ -1091,6 +1166,7 @@ export function TutorialOverlay({
 
   useEffect(() => {
     return () => {
+      stopAiVoice();
       if (moveTimerRef.current !== null) window.clearTimeout(moveTimerRef.current);
       if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
       if (autoCloseTimerRef.current !== null) window.clearTimeout(autoCloseTimerRef.current);
@@ -1173,6 +1249,7 @@ export function TutorialOverlay({
   const handleOpenManual = () => {
     clearAutoCloseTimer();
     clearSpontaneousTimer();
+    stopAiVoice();
     setAutoNotice(null);
     setDragPos(null);
     if (persona === "earth") {
@@ -1242,6 +1319,7 @@ export function TutorialOverlay({
                 setTriviaAttempted((n) => n + 1);
                 if (idx === currentTrivia.correctIndex) {
                   setTriviaScore((s) => s + 1);
+                  playAiVoice("/audio/voice/space_ai/space_trivia_happy.mp3");
                   if (happyTimerRef.current !== null) {
                     window.clearTimeout(happyTimerRef.current);
                   }
@@ -1252,6 +1330,7 @@ export function TutorialOverlay({
                     happyTimerRef.current = null;
                   }, 3500);
                 } else {
+                  playAiVoice("/audio/voice/space_ai/space_trivia_sad.mp3");
                   if (sadTimerRef.current !== null) {
                     window.clearTimeout(sadTimerRef.current);
                   }
@@ -1388,9 +1467,8 @@ export function TutorialOverlay({
       )}
 
       <div
-        className={`tutorial-stage ${activeBubbleSide === "left" ? "bubble-left" : "bubble-right"} ${
-          closingToAfk ? "closing-to-afk" : ""
-        } ${isDragging ? "is-dragging" : ""}`}
+        className={`tutorial-stage ${activeBubbleSide === "left" ? "bubble-left" : "bubble-right"} ${closingToAfk ? "closing-to-afk" : ""
+          } ${isDragging ? "is-dragging" : ""}`}
         style={{ left: `${targetX}px`, top: `${targetY}px` }}
       >
         <img
