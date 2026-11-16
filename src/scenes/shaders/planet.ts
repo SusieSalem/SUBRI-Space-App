@@ -24,8 +24,11 @@ ${vertexHead}
 varying vec3 vDir;
 void main() {
   vDir = position;
-  vec4 wp = modelMatrix * vec4(position, 1.0);
-  gl_Position = projectionMatrix * viewMatrix * wp;
+  // This sphere follows the camera, which can be 1e8..2e9 m from the origin. Multiplying by
+  // modelMatrix and then viewMatrix would add and cancel two numbers that big in float32
+  // (steps of 8..256 m on a sphere of radius 1000), so the sky jumped around when the camera
+  // moved far out. modelViewMatrix is built in double precision on the CPU, where they cancel.
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   ${vertexTail}
 }
 `;
@@ -877,7 +880,7 @@ vec3 sampleWaterSkyReflection(vec3 reflectDir, vec3 sunVec, float transitFactor)
   float g2 = G * G;
   float phaseM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + nu * nu)) / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * G * nu, 1.5));
   // A faint navy floor so a night sea isn't pure black.
-  vec3 nightFloor = uSunIntensity * vec3(0.0005, 0.0009, 0.0018);
+  vec3 nightFloor = uSunIntensity * vec3(0.012, 0.022, 0.045);
   return (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM) * uSunIntensity * transitFactor + nightFloor;
 }
 
@@ -1212,7 +1215,10 @@ void main() {
 
     vec3 sunLight = uSunIntensity * sunT * max(ndl, 0.0) / PI * shadow;
     vec3 skyLight = uSunIntensity * transitFactor * vec3(0.012, 0.022, 0.045) * smoothstep(-0.1, 0.3, ndl);
-    vec3 landCol = albedo * (sunLight + skyLight) * viewT + inscatter;
+    // Moon and starlight: a dim blue floor so the ground is readable at night (the Sun term
+    // above is zero there). It fades out as the Sun comes up.
+    vec3 nightLight = vec3(0.07, 0.11, 0.21) * (1.0 - smoothstep(-0.12, 0.2, ndl));
+    vec3 landCol = albedo * (sunLight + skyLight + nightLight) * viewT + inscatter;
     float night = 1.0 - smoothstep(-0.15, 0.05, ndl);
     vec3 nightTex = sampleEarth(uEarthNight, ecefToEarthUV(nf));
     float cityGlow = max(0.0, max(nightTex.r, nightTex.g) - nightTex.b * 0.65);
