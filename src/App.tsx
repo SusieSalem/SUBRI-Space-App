@@ -134,6 +134,7 @@ export default function App() {
   const [quality, setQuality] = useState<Quality>("low");
   const [weather, setWeather] = useState<WeatherState>("cloudy");
   const [tutorialOpen, setTutorialOpen] = useState(true);
+  const [planningAiOpen, setPlanningAiOpen] = useState(true);
   const [spaceAiOpen, setSpaceAiOpen] = useState(false);
   const [launchDate, setLaunchDate] = useState<string>("2026-07-20");
   const [timeOfDay, setTimeOfDay] = useState<number>(8.6);
@@ -503,26 +504,26 @@ export default function App() {
         </>
       )}
 
-      {mode !== "planning" && (
-        <TutorialOverlay
-          persona={mode === "flight" ? "space" : "earth"}
-          open={mode === "flight" ? spaceAiOpen : tutorialOpen}
-          onOpenChange={mode === "flight" ? setSpaceAiOpen : setTutorialOpen}
-          canLaunch={canLaunch}
-          buildIssues={[
-            ...blockers.map((b) => b.message),
-            ...(!check.fits ? [`Mass exceeds ${ROCKETS_BY_ID[rocket].name} limit.`] : []),
-            ...(overBudget ? [`Cost exceeds $${MISSION_REQUIREMENTS.budgetMUsd}M budget.`] : []),
-          ]}
-          weather={weather}
-          timeOfDay={displayTime}
-          stormExposed={stormResult?.outcome === "exposed"}
-          telemetry={tel}
-          mapView={mapView}
-          onToggleMap={() => setMapView((m) => !m)}
-          onToggleAutopilot={() => simRef.current.setAutopilot(!simRef.current.autopilot)}
-        />
-      )}
+      <TutorialOverlay
+        persona={mode === "flight" ? "space" : mode === "planning" ? "planning" : "earth"}
+        open={mode === "flight" ? spaceAiOpen : mode === "planning" ? planningAiOpen : tutorialOpen}
+        onOpenChange={
+          mode === "flight" ? setSpaceAiOpen : mode === "planning" ? setPlanningAiOpen : setTutorialOpen
+        }
+        canLaunch={canLaunch}
+        buildIssues={[
+          ...blockers.map((b) => b.message),
+          ...(!check.fits ? [`Mass exceeds ${ROCKETS_BY_ID[rocket].name} limit.`] : []),
+          ...(overBudget ? [`Cost exceeds $${MISSION_REQUIREMENTS.budgetMUsd}M budget.`] : []),
+        ]}
+        weather={weather}
+        timeOfDay={displayTime}
+        stormExposed={stormResult?.outcome === "exposed"}
+        telemetry={tel}
+        mapView={mapView}
+        onToggleMap={() => setMapView((m) => !m)}
+        onToggleAutopilot={() => simRef.current.setAutopilot(!simRef.current.autopilot)}
+      />
 
       {mode === "flight" && tel && (
         <>

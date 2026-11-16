@@ -29,7 +29,12 @@ const url = (name: ModelName) => `/models/${name}.glb`;
  * "stage1" in a rocket). Suspends while loading: wrap it in <Suspense> with
  * the primitive placeholder as fallback.
  */
-export function Model({ name, node, ...props }: { name: ModelName; node?: string } & ThreeElements["group"]) {
+export function Model({
+  name,
+  node,
+  onLoad,
+  ...props
+}: { name: ModelName; node?: string; onLoad?: (object: THREE.Object3D) => void } & ThreeElements["group"]) {
   const gltf = useGLTF(url(name), DRACO_PATH);
   const object = useMemo<THREE.Object3D | null>(() => {
     const src = node ? gltf.nodes[node] : gltf.scene;
@@ -42,7 +47,9 @@ export function Model({ name, node, ...props }: { name: ModelName; node?: string
         o.receiveShadow = true;
       }
     });
+    onLoad?.(copy);
     return copy;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gltf, node]);
   if (!object) return null;
   return (

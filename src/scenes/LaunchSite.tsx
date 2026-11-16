@@ -15,6 +15,7 @@ import type { RocketId } from "../core/launchCheck";
 import { MOUNT_HEIGHT } from "../core/simulate";
 import { ROCKET_SPECS, stackDims } from "./Rocket";
 import { Model } from "./models";
+import { lagoonFragment, lagoonVertex } from "./shaders/lagoon";
 
 function useGroundTexture() {
   return useMemo(() => {
@@ -60,22 +61,70 @@ export default function LaunchSite({ rocket, parts, armSwing }: { rocket: Rocket
   const towerX = -(r + 8);
   const towerH = MOUNT_HEIGHT + dims.total * 0.9;
   const armRef = useRef<THREE.Group>(null);
+  const sunRef = useRef<THREE.DirectionalLight | null | undefined>(undefined);
 
-  useFrame(() => {
+  useFrame(({ clock, scene }) => {
+    lagoon.uniforms.uTime.value = clock.elapsedTime;
+    // follow the scene's sun (looked up once)
+    if (sunRef.current === undefined) {
+      sunRef.current = null;
+      scene.traverse((o) => {
+        if (!sunRef.current && (o as THREE.DirectionalLight).isDirectionalLight) sunRef.current = o as THREE.DirectionalLight;
+      });
+    }
+    const sun = sunRef.current;
+    if (sun) lagoon.uniforms.uSunDir.value.subVectors(sun.position, sun.target.position).normalize();
     if (armRef.current) armRef.current.rotation.y = armSwing.current * 1.4;
   });
+
+  // Lagoon water and the flat ground pieces of the model (roads, crawlerway):
+  // the flat pieces get a depth bias so they never flicker against the terrain.
+  const lagoon = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: lagoonVertex,
+        fragmentShader: lagoonFragment,
+        uniforms: {
+          uTime: { value: 0 },
+          uSunDir: { value: new THREE.Vector3(0.4, 0.8, 0.3) },
+          uDeep: { value: new THREE.Color("#0d3b4f") },
+          uShallow: { value: new THREE.Color("#2f7f8f") },
+          uSky: { value: new THREE.Color("#a9c6dd") },
+        },
+        polygonOffset: true,
+        polygonOffsetFactor: -4,
+        polygonOffsetUnits: -4,
+      }),
+    [],
+  );
+  const prepareSite = (site: THREE.Object3D) => {
+    site.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const m = mesh.material as THREE.MeshStandardMaterial;
+      if (m.name === "LS_Water") {
+        mesh.material = lagoon;
+        mesh.castShadow = false;
+      } else if (m.name === "LS_Road" || m.name === "LS_Gravel") {
+        m.polygonOffset = true;
+        m.polygonOffsetFactor = -2;
+        m.polygonOffsetUnits = -2;
+        mesh.castShadow = false;
+      }
+    });
+  };
 
   const grey = useMemo(() => new THREE.MeshStandardMaterial({ color: "#6d7178", roughness: 0.7, metalness: 0.3, flatShading: true }), []);
 
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh position={[0, 0.2, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <circleGeometry args={[700, 96]} />
-        <meshStandardMaterial map={tex} transparent alphaTest={0.05} roughness={0.95} depthWrite />
+        <meshStandardMaterial map={tex} transparent alphaTest={0.05} roughness={0.95} depthWrite polygonOffset polygonOffsetFactor={-1} polygonOffsetUnits={-1} />
       </mesh>
 
       <Suspense fallback={null}>
-        <Model name="launch_site" />
+        <Model name="launch_site" onLoad={prepareSite} />
       </Suspense>
 
       {/* Service tower (stretched to the stack) and crew access arm */}

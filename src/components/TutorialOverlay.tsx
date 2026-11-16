@@ -21,7 +21,7 @@ import aiSpaceSad1 from "../ui/AI assets/AI Space Sad1.png";
 import aiSpaceSad2 from "../ui/AI assets/AI Space Sad2.png";
 
 export type AiAnimState = "front" | "moving" | "happy" | "sad";
-export type AiPersona = "earth" | "space";
+export type AiPersona = "earth" | "planning" | "space";
 type SpaceTab = "status" | "facts" | "trivia";
 type EarthMode = "tutorial" | "menu" | "check" | "weather" | "trivia";
 
@@ -76,6 +76,46 @@ const EARTH_STEPS: TutorialStep[] = [
     id: "launch",
     title: "Ready for Liftoff",
     text: "Once all readiness checks are green, hit Plan the orbit or Launch with autopilot plan to begin your mission!",
+    targetSelector: ".controls .primary.big",
+    placement: "top",
+    emotion: "happy",
+  },
+];
+
+const PLANNING_STEPS: TutorialStep[] = [
+  {
+    id: "plan-welcome",
+    title: "Step 2: Orbit Planner",
+    text: "Welcome to Mission Control! Here you aim your Trans-Lunar Injection (TLI) burn so your crew flies around the Moon and returns safely home.",
+    targetSelector: null,
+    placement: "center",
+    emotion: "happy",
+  },
+  {
+    id: "plan-maneuver",
+    title: "Maneuver Controls",
+    text: "Tune your Parking Altitude, Burn Point angle, and Burn Δv — or click 'Suggest a plan' to auto-compute a free-return trajectory.",
+    targetSelector: ".planner-controls",
+    placement: "right",
+  },
+  {
+    id: "plan-map",
+    title: "Live Trajectory & Moon Map",
+    text: "See where your path meets the Moon (switch between Moon moves & Moon fixed), and drag the orange burn node on the close-up circle!",
+    targetSelector: ".planner-map",
+    placement: "left",
+  },
+  {
+    id: "plan-checks",
+    title: "Flight & Life-Support Checks",
+    text: "Make sure all three checks (Reaches the Moon, Enough Propellant, and Comes Home within life-support days) turn green.",
+    targetSelector: ".planner-checks",
+    placement: "left",
+  },
+  {
+    id: "plan-launch",
+    title: "Launch This Plan",
+    text: "When your free return looks good, click 'Launch this plan' to head to the pad and fly it!",
     targetSelector: ".controls .primary.big",
     placement: "top",
     emotion: "happy",
@@ -257,6 +297,14 @@ interface PersonaSprites {
 
 const PERSONA_SPRITES: Record<AiPersona, PersonaSprites> = {
   earth: {
+    icon: aiIcon,
+    front: [aiFront1, aiFront2],
+    happy: [aiHappy1, aiHappy2],
+    sad: [aiSad1, aiSad2],
+    moving: [aiMoving1, aiMoving2],
+    label: "Guide",
+  },
+  planning: {
     icon: aiIcon,
     front: [aiFront1, aiFront2],
     happy: [aiHappy1, aiHappy2],
@@ -516,6 +564,7 @@ export function TutorialOverlay({
   const [stepIndex, setStepIndex] = useState(0);
   const [earthMode, setEarthMode] = useState<EarthMode>("tutorial");
   const [hasSeenTutorial, setHasSeenTutorial] = useState(false);
+  const [hasSeenPlanTutorial, setHasSeenPlanTutorial] = useState(false);
 
   const [factIndex, setFactIndex] = useState(0);
   const [spaceTab, setSpaceTab] = useState<SpaceTab>("status");
@@ -567,11 +616,12 @@ export function TutorialOverlay({
     ...SPACE_FACTS.filter((f) => f.zone !== zone),
   ];
 
-  const earthStep = EARTH_STEPS[stepIndex] ?? EARTH_STEPS[0];
+  const groundSteps = persona === "planning" ? PLANNING_STEPS : EARTH_STEPS;
+  const earthStep = groundSteps[stepIndex] ?? groundSteps[0];
   const currentFact = orderedFacts[factIndex % orderedFacts.length] ?? SPACE_FACTS[0];
   const currentTrivia = SPACE_TRIVIA[triviaIndex % SPACE_TRIVIA.length];
   const isEarthFirst = stepIndex === 0;
-  const isEarthLast = stepIndex === EARTH_STEPS.length - 1;
+  const isEarthLast = stepIndex === groundSteps.length - 1;
 
   const clearAutoCloseTimer = useCallback(() => {
     if (autoCloseTimerRef.current !== null) {
@@ -588,9 +638,20 @@ export function TutorialOverlay({
     }
   }, []);
 
-  // Reset transient state when switching between Earth and Space personas
+  // Reset transient state when switching personas
   useEffect(() => {
     setStepIndex(0);
+    setEarthMode(
+      persona === "planning"
+        ? hasSeenPlanTutorial
+          ? "menu"
+          : "tutorial"
+        : persona === "earth"
+          ? hasSeenTutorial
+            ? "menu"
+            : "tutorial"
+          : "tutorial",
+    );
     setFactIndex(0);
     setFrameIndex(0);
     setIsMoving(false);
@@ -655,6 +716,8 @@ export function TutorialOverlay({
     clearAutoCloseTimer();
     if (persona === "earth") {
       setHasSeenTutorial(true);
+    } else if (persona === "planning") {
+      setHasSeenPlanTutorial(true);
     }
     setAutoNotice(null);
     setFacingRight(afkCoords.x > activeX);
@@ -872,6 +935,8 @@ export function TutorialOverlay({
     }
   }, [persona, telemetry, stormExposed, open, closingToAfk, triggerAutoNotice]);
 
+  const isGround = persona === "earth" || persona === "planning";
+
   // Determine current emotion state for sprite animation
   const weatherSummary = getWeatherSummary(weather, timeOfDay);
   const isSadMoment =
@@ -891,7 +956,7 @@ export function TutorialOverlay({
     !isSadMoment &&
     (happyBoost ||
       autoNotice?.emotion === "happy" ||
-      (persona === "earth" &&
+      (isGround &&
         !autoNotice &&
         ((earthMode === "tutorial" && earthStep.emotion === "happy") ||
           (earthMode === "check" && canLaunch) ||
@@ -1088,12 +1153,12 @@ export function TutorialOverlay({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         handleClose();
-      } else if (persona === "earth" && earthMode === "tutorial") {
+      } else if ((persona === "earth" || persona === "planning") && earthMode === "tutorial") {
         if (e.key === "ArrowRight") {
           if (isEarthLast) handleClose();
           else {
             setDragPos(null);
-            setStepIndex((i) => Math.min(EARTH_STEPS.length - 1, i + 1));
+            setStepIndex((i) => Math.min(groundSteps.length - 1, i + 1));
           }
         } else if (e.key === "ArrowLeft" && !isEarthFirst) {
           setDragPos(null);
@@ -1103,7 +1168,7 @@ export function TutorialOverlay({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, closingToAfk, autoNotice, persona, earthMode, isEarthFirst, isEarthLast, handleClose]);
+  }, [open, closingToAfk, autoNotice, persona, earthMode, isEarthFirst, isEarthLast, groundSteps.length, handleClose]);
 
   const handleOpenManual = () => {
     clearAutoCloseTimer();
@@ -1113,6 +1178,9 @@ export function TutorialOverlay({
     if (persona === "earth") {
       setEarthMode(hasSeenTutorial ? "menu" : "tutorial");
       setStepIndex(0);
+    } else if (persona === "planning") {
+      setEarthMode(hasSeenPlanTutorial ? "menu" : "tutorial");
+      setStepIndex(0);
     }
     onOpenChange(true);
   };
@@ -1121,7 +1189,7 @@ export function TutorialOverlay({
     clearAutoCloseTimer();
     setDragPos(null);
     if (isEarthLast) handleClose();
-    else setStepIndex((i) => Math.min(EARTH_STEPS.length - 1, i + 1));
+    else setStepIndex((i) => Math.min(groundSteps.length - 1, i + 1));
   };
 
   const handleEarthBack = () => {
@@ -1257,7 +1325,7 @@ export function TutorialOverlay({
   const targetY = closingToAfk ? afkCoords.y : activeY;
   const diagnosis = getLiveDiagnosis(telemetry);
   const showSpotlightBackdrop =
-    persona === "earth" && !closingToAfk && !autoNotice && earthMode === "tutorial";
+    isGround && !closingToAfk && !autoNotice && earthMode === "tutorial";
 
   return (
     <div
@@ -1351,7 +1419,7 @@ export function TutorialOverlay({
                 <button type="button" className="tutorial-btn ghost" onClick={handleClose}>
                   Hide
                 </button>
-                {persona === "earth" && (
+                {isGround && (
                   <button
                     type="button"
                     className="tutorial-btn primary"
@@ -1366,12 +1434,12 @@ export function TutorialOverlay({
                 )}
               </div>
             </>
-          ) : persona === "earth" ? (
+          ) : isGround ? (
             earthMode === "tutorial" ? (
               <>
                 <div className="tutorial-header">
                   <span className="tutorial-step-pill">
-                    {stepIndex + 1} / {EARTH_STEPS.length}
+                    {stepIndex + 1} / {groundSteps.length}
                   </span>
                   <h3 className="tutorial-title">{earthStep.title}</h3>
                 </div>
@@ -1395,11 +1463,17 @@ export function TutorialOverlay({
             ) : earthMode === "menu" ? (
               <>
                 <div className="tutorial-header">
-                  <span className="tutorial-step-pill">Earth AI</span>
-                  <h3 className="tutorial-title">Need a hand on the pad?</h3>
+                  <span className="tutorial-step-pill">
+                    {persona === "planning" ? "Orbit Plan" : "Earth AI"}
+                  </span>
+                  <h3 className="tutorial-title">
+                    {persona === "planning" ? "Need help planning the burn?" : "Need a hand on the pad?"}
+                  </h3>
                 </div>
                 <p className="tutorial-text">
-                  Want to repeat the guided tutorial, inspect your rocket build, or test your space knowledge?
+                  {persona === "planning"
+                    ? "Repeat the Orbit Planner walkthrough, check your rocket readiness, or play Space Trivia."
+                    : "Want to repeat the guided tutorial, inspect your rocket build, or test your space knowledge?"}
                 </p>
                 <div className="tutorial-menu-grid">
                   <button
