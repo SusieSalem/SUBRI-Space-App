@@ -30,6 +30,7 @@ import {
   eciToEcef,
   gravity,
   moonPosition,
+  moonVelocity,
   pressureRatio,
   sunDirectionAt,
   type Vec3,
@@ -240,6 +241,8 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       uEarthDay: { value: loadGlobeTex("/textures/earth_day.jpg") },
       uEarthNight: { value: loadGlobeTex("/textures/earth_night.png") },
       uEarthSpec: { value: loadGlobeTex("/textures/earth_specular.jpg") },
+      uMoonColor: { value: loadGlobeTex("/textures/moon_color.jpg") },
+      uMoonNorth: { value: new THREE.Vector3(0, 0, -1) },
     };
   }, []);
   const skyDefines = useMemo(
@@ -918,6 +921,11 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       astroMoonRel.y + (orbitMoonRel.y - astroMoonRel.y) * deepSpaceBlend,
       astroMoonRel.z + (orbitMoonRel.z - astroMoonRel.z) * deepSpaceBlend,
     );
+    // Lunar north: the normal of the Moon's orbit (its spin axis, within a few degrees).
+    const mv = moonVelocity(t);
+    u.uMoonNorth.value
+      .set(orbitMoon.y * mv.z - orbitMoon.z * mv.y, orbitMoon.z * mv.x - orbitMoon.x * mv.z, orbitMoon.x * mv.y - orbitMoon.y * mv.x)
+      .normalize();
     u.uEarthAngle.value = earthAngle(t);
     // Cloud time combines real-time ambient drift (even on the pad), mission time (when syncCycle is on),
     // and time-of-day scrubbing so moving the slider forward/backward visibly moves the clouds!

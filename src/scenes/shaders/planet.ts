@@ -51,6 +51,8 @@ uniform float uWeather;   // 0 = clear, 1 = cloudy, 2 = rain, 3 = storm
 uniform sampler2D uEarthDay;   // NASA Blue Marble 2K equirectangular daylight texture
 uniform sampler2D uEarthNight; // NASA Black Marble 2K equirectangular nighttime city lights
 uniform sampler2D uEarthSpec;  // NASA Earth 2K land/water specular mask
+uniform sampler2D uMoonColor;  // NASA SVS CGI Moon Kit, LRO LROC WAC 2K colour map (equirectangular, lon 0 at centre)
+uniform vec3 uMoonNorth;       // ECI, lunar north pole (normal of the Moon's orbit)
 varying vec3 vDir;
 
 #ifndef VIEW_STEPS
@@ -73,6 +75,9 @@ varying vec3 vDir;
 #endif
 
 const float R = ${R_EARTH.toFixed(1)};
+// The LRO map is stored bright (highlands near white); this brings it to the old range,
+// about 0.30 for the highlands and 0.12 for the maria.
+const float MOON_ALBEDO_GAIN = 0.45;
 const float RM = ${R_MOON.toFixed(1)};
 const float HA = 100000.0;
 const float HR = 8000.0;
@@ -1055,17 +1060,20 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
   return body * (1.0 - F) + skyR * F + uSunIntensity * sunT * spec;
 }
 
-vec3 moonAlbedo(vec3 n) {
-  float maria = smoothstep(0.48, 0.58, fbm(n * 1.6 + 3.0, 5));
-  float base = mix(0.36, 0.17, maria);
-  float c = 0.0;
-  for (int k = 0; k < 3; k++) {
-    float sc = k == 0 ? 6.0 : (k == 1 ? 14.0 : 32.0);
-    float d = cellDist(n * sc + float(k) * 11.0);
-    c += (smoothstep(0.26, 0.33, d) * smoothstep(0.42, 0.33, d) * 0.45 - smoothstep(0.32, 0.18, d) * 0.35) * (0.6 / (1.0 + float(k)));
-  }
-  float a = base + c * 0.4 + (fbm(n * 40.0, 3) - 0.5) * 0.08;
-  return vec3(a) * vec3(1.0, 0.97, 0.93);
+// Lunar albedo from the NASA LRO colour map. The Moon is tidally locked, so its
+// longitude 0 (the centre of the map) always faces the Earth. toEarth is the
+// direction from the Moon's centre to the Earth's centre.
+vec3 moonAlbedo(vec3 n, vec3 toEarth) {
+  vec3 ez = normalize(uMoonNorth);
+  vec3 ex = normalize(toEarth - ez * dot(toEarth, ez));
+  vec3 ey = cross(ez, ex); // east
+  float lon = atan(dot(n, ey), dot(n, ex));
+  float lat = asin(clamp(dot(n, ez), -1.0, 1.0));
+  vec2 uv = vec2(fract(lon / (2.0 * PI) + 0.5), clamp(lat / PI + 0.5, 0.001, 0.999));
+  vec3 tex = pow(sampleEarth(uMoonColor, uv), vec3(2.2));
+  // A little fine grain so the 2K map (about 5 km per pixel) does not look flat up close.
+  float grain = 1.0 + (fbm(n * 400.0, 3) - 0.5) * 0.12;
+  return tex * MOON_ALBEDO_GAIN * grain;
 }
 
 vec3 stars(vec3 d) {
@@ -1238,7 +1246,8 @@ void main() {
   } else if (hitMoon) {
     vec3 p = d * tMoon - uMoonRel;
     vec3 n = normalize(p);
-    vec3 albedo = moonAlbedo(n);
+    vec3 toEarth = -normalize(uCamUp) * (R + uCamAlt) - uMoonRel;
+    vec3 albedo = moonAlbedo(n, normalize(toEarth));
     float ndl = max(dot(n, L), 0.0);
     float ndv = max(dot(n, -d), 0.0);
     float ls = ndl / (ndl + ndv + 1e-4) * 2.0;
