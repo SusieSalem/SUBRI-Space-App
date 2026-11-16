@@ -98,13 +98,56 @@ export default function LaunchSite({ rocket, parts, armSwing }: { rocket: Rocket
     [],
   );
   const prepareSite = (site: THREE.Object3D) => {
+    const stripTriangles = (mesh: THREE.Mesh, pred: (x: number, y: number, z: number) => boolean) => {
+      const geo = mesh.geometry;
+      const pos = geo.getAttribute("position");
+      if (!pos) return;
+      if (geo.index) {
+        const idx = geo.index.array;
+        const kept: number[] = [];
+        for (let i = 0; i < idx.length; i += 3) {
+          const a = idx[i], b = idx[i + 1], c = idx[i + 2];
+          const cx = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3;
+          const cy = (pos.getY(a) + pos.getY(b) + pos.getY(c)) / 3;
+          const cz = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
+          if (!pred(cx, cy, cz)) kept.push(a, b, c);
+        }
+        geo.setIndex(kept);
+      } else {
+        const keepVerts: number[] = [];
+        const keepNorms: number[] = [];
+        const norm = geo.getAttribute("normal");
+        for (let i = 0; i < pos.count; i += 3) {
+          const cx = (pos.getX(i) + pos.getX(i + 1) + pos.getX(i + 2)) / 3;
+          const cy = (pos.getY(i) + pos.getY(i + 1) + pos.getY(i + 2)) / 3;
+          const cz = (pos.getZ(i) + pos.getZ(i + 1) + pos.getZ(i + 2)) / 3;
+          if (!pred(cx, cy, cz)) {
+            for (let k = 0; k < 3; k++) {
+              keepVerts.push(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k));
+              if (norm) keepNorms.push(norm.getX(i + k), norm.getY(i + k), norm.getZ(i + k));
+            }
+          }
+        }
+        geo.setAttribute("position", new THREE.Float32BufferAttribute(keepVerts, 3));
+        if (norm) geo.setAttribute("normal", new THREE.Float32BufferAttribute(keepNorms, 3));
+      }
+      geo.computeBoundingSphere();
+    };
+
     site.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
       const m = mesh.material as THREE.MeshStandardMaterial;
       if (m.name === "LS_Water") {
-        mesh.material = lagoon;
+        // Hide the pad lagoon/puddle meshes per art direction
+        mesh.visible = false;
         mesh.castShadow = false;
+      } else if (m.name === "LS_White") {
+        // Remove the elevated water tower sphere near the pad (+X > 55, Y > 18)
+        stripTriangles(mesh, (x, y) => x > 55 && y > 18);
+      } else if (m.name === "LS_Steel") {
+        // Remove the water tower stilts at +X > 55 (the 4 lightning masts sit within |X| <= 52)
+        stripTriangles(mesh, (x) => x > 55);
       } else if (m.name === "LS_Road" || m.name === "LS_Gravel") {
         m.polygonOffset = true;
         m.polygonOffsetFactor = -2;

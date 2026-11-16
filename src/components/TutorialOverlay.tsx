@@ -344,6 +344,8 @@ const MOVE_DURATION_MS = 520;
 const AUTO_CLOSE_MS = 11000;
 const SPONTANEOUS_MIN_MS = 25000;
 const SPONTANEOUS_MAX_MS = 35000;
+const SPACE_SPONTANEOUS_MIN_MS = 10000;
+const SPACE_SPONTANEOUS_MAX_MS = 14000;
 
 interface StagePosition {
   x: number;
@@ -610,6 +612,7 @@ export function TutorialOverlay({
   const prevStageXRef = useRef<number | null>(null);
   const prevCanLaunchRef = useRef<boolean>(canLaunch);
   const prevWeatherRef = useRef<WeatherState | undefined>(weather);
+  const wasInTriviaRef = useRef(false);
   const seenMilestonesRef = useRef<Set<string>>(new Set());
   const spontaneousCountRef = useRef(0);
   const moveTimerRef = useRef<number | null>(null);
@@ -626,6 +629,9 @@ export function TutorialOverlay({
     ...zoneFacts,
     ...SPACE_FACTS.filter((f) => f.zone !== zone),
   ];
+  // Store latest zone-ordered facts in a ref so 150ms telemetry updates don't reset the spontaneous timer.
+  const orderedFactsRef = useRef(orderedFacts);
+  orderedFactsRef.current = orderedFacts;
 
   const groundSteps = persona === "planning" ? PLANNING_STEPS : EARTH_STEPS;
   const earthStep = groundSteps[stepIndex] ?? groundSteps[0];
@@ -771,13 +777,18 @@ export function TutorialOverlay({
     [closingToAfk, onOpenChange, scheduleAutoHide],
   );
 
-  // Spontaneous "alive" popups every 25-35s when minimized
+  useEffect(() => {
+    spontaneousCountRef.current = 0;
+  }, [persona]);
+
+  // Spontaneous "alive" popups when minimized (faster & trivia-first in space)
   useEffect(() => {
     clearSpontaneousTimer();
     if (open || closingToAfk) return;
 
-    const delayMs =
-      SPONTANEOUS_MIN_MS + Math.random() * (SPONTANEOUS_MAX_MS - SPONTANEOUS_MIN_MS);
+    const minMs = persona === "space" ? SPACE_SPONTANEOUS_MIN_MS : SPONTANEOUS_MIN_MS;
+    const maxMs = persona === "space" ? SPACE_SPONTANEOUS_MAX_MS : SPONTANEOUS_MAX_MS;
+    const delayMs = minMs + Math.random() * (maxMs - minMs);
 
     spontaneousTimerRef.current = window.setTimeout(() => {
       spontaneousTimerRef.current = null;
@@ -785,8 +796,8 @@ export function TutorialOverlay({
       setDragPos(null);
       setAnchorSeed((s) => s + 1);
 
-      // Every 3rd spontaneous appearance challenges the user with a quick Trivia question
-      if (count % 3 === 2) {
+      const shouldAskTrivia = persona === "space" ? count % 2 === 0 : count % 3 === 2;
+      if (shouldAskTrivia) {
         setAutoNotice(null);
         setTriviaPick(null);
         setTriviaIndex((i) => (i + 1) % SPACE_TRIVIA.length);
@@ -827,7 +838,8 @@ export function TutorialOverlay({
           });
         }
       } else {
-        const fact = orderedFacts[count % orderedFacts.length] ?? SPACE_FACTS[0];
+        const facts = orderedFactsRef.current;
+        const fact = facts[count % facts.length] ?? SPACE_FACTS[0];
         triggerAutoNotice({
           tag: fact.tag,
           title: fact.title,
@@ -844,7 +856,6 @@ export function TutorialOverlay({
     persona,
     weather,
     canLaunch,
-    orderedFacts,
     onOpenChange,
     scheduleAutoHide,
     triggerAutoNotice,
@@ -959,7 +970,17 @@ export function TutorialOverlay({
   }, [persona, telemetry, stormExposed, open, closingToAfk, triggerAutoNotice]);
 
   // Play pre-recorded Fish Audio voice lines matching the active AI state
+  const isGround = persona === "earth" || persona === "planning";
+  const inTriviaNow =
+    open &&
+    !closingToAfk &&
+    !autoNotice &&
+    ((isGround && earthMode === "trivia") || (persona === "space" && spaceTab === "trivia"));
+
   useEffect(() => {
+    const enteredTrivia = inTriviaNow && !wasInTriviaRef.current;
+    wasInTriviaRef.current = inTriviaNow;
+
     if (!open || closingToAfk) {
       stopAiVoice();
       return;
@@ -971,7 +992,7 @@ export function TutorialOverlay({
       return;
     }
 
-    if (persona === "earth" || persona === "planning") {
+    if (isGround) {
       if (earthMode === "tutorial") {
         if (earthStep.voiceClip) playAiVoice(earthStep.voiceClip);
         else stopAiVoice();
@@ -981,18 +1002,18 @@ export function TutorialOverlay({
         playAiVoice("/audio/voice/earth_ai/earth_storm.mp3");
       } else if (earthMode === "check" && canLaunch) {
         playAiVoice("/audio/voice/earth_ai/earth_cleared.mp3");
-      } else if (earthMode === "trivia" && triviaPick === null) {
-        playAiVoice("/audio/voice/space_ai/space_trivia_ask.mp3");
-      } else if (earthMode !== "trivia") {
+      } else if (earthMode === "trivia") {
+        if (enteredTrivia) playAiVoice("/audio/voice/space_ai/space_trivia_ask.mp3");
+      } else {
         stopAiVoice();
       }
       return;
     }
 
     if (persona === "space") {
-      if (spaceTab === "trivia" && triviaPick === null) {
-        playAiVoice("/audio/voice/space_ai/space_trivia_ask.mp3");
-      } else if (spaceTab !== "trivia") {
+      if (spaceTab === "trivia") {
+        if (enteredTrivia) playAiVoice("/audio/voice/space_ai/space_trivia_ask.mp3");
+      } else {
         stopAiVoice();
       }
     }
@@ -1001,16 +1022,14 @@ export function TutorialOverlay({
     closingToAfk,
     autoNotice,
     persona,
+    isGround,
     earthMode,
     earthStep.voiceClip,
     spaceTab,
-    triviaIndex,
-    triviaPick,
+    inTriviaNow,
     weather,
     canLaunch,
   ]);
-
-  const isGround = persona === "earth" || persona === "planning";
 
   // Determine current emotion state for sprite animation
   const weatherSummary = getWeatherSummary(weather, timeOfDay);

@@ -884,8 +884,8 @@ vec3 sampleWaterSkyReflection(vec3 reflectDir, vec3 sunVec, float transitFactor)
   float phaseR = 3.0 / (16.0 * PI) * (1.0 + nu * nu);
   float g2 = G * G;
   float phaseM = 3.0 / (8.0 * PI) * ((1.0 - g2) * (1.0 + nu * nu)) / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * G * nu, 1.5));
-  // A faint navy floor so a night sea isn't pure black.
-  vec3 nightFloor = uSunIntensity * vec3(0.012, 0.022, 0.045);
+  // Subtle midnight navy floor so a night sea stays dark without vanishing to pure black.
+  vec3 nightFloor = uSunIntensity * vec3(0.00035, 0.0007, 0.0016) * (1.0 - smoothstep(-0.12, 0.2, sunVec.y));
   return (sumR * BETA_R * phaseR + sumM * BETA_M * phaseM) * uSunIntensity * transitFactor + nightFloor;
 }
 
@@ -1035,7 +1035,7 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
     float g2R = G * G;
     float phaseMR = 3.0 / (8.0 * PI) * ((1.0 - g2R) * (1.0 + nuR * nuR)) / ((2.0 + g2R) * pow(1.0 + g2R - 2.0 * G * nuR, 1.5));
     vec3 skyReflection = (sumR * BETA_R * phaseRR + sumM * BETA_M * phaseMR) * uSunIntensity * transitFactor
-      + uSunIntensity * vec3(0.0005, 0.0009, 0.0018);
+      + uSunIntensity * vec3(0.00035, 0.0007, 0.0016) * (1.0 - smoothstep(-0.12, 0.2, sunVec.y));
     #endif
 
     // 4.3 Specular Highlights (GGX Direct Sun Reflection)

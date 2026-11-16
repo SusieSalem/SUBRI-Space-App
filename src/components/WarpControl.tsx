@@ -2,7 +2,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from "./icons";
 
 function formatWarp(w: number) {
   if (w < 1) return "0x";
-  return w >= 1000 ? `${w / 1000}k` : `${Math.round(w)}x`;
+  return w >= 1000 ? `${+(w / 1000).toFixed(1)}k` : `${Math.round(w)}x`;
 }
 
 /**
@@ -30,7 +30,7 @@ export function WarpControl({
 }) {
   const auto = setting === "auto";
   const timelapse = setting === "timelapse";
-  const cur = typeof setting === "number" ? setting : effective;
+  const cur = typeof setting === "number" ? Math.min(setting, maxWarp) : effective;
   let i = levels.findIndex((l) => l >= cur);
   if (i < 0) i = levels.length - 1;
   const prev = i > 0 ? levels[i - 1] : undefined;

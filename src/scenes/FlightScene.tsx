@@ -343,6 +343,8 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     crashTriggered.current = false;
     eventIndex.current = 0;
     sounds.current.clear();
+    autoFramed.current.clear();
+    lookPending.current = null;
     lastPhaseSound.current = "prelaunch";
     setFlags({ deployed: false, capsuleOnly: false, serviceBurning: false, heat: 0 });
     if (smDebrisRef.current) smDebrisRef.current.visible = false;
@@ -721,22 +723,28 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     }
 
     // Solar & Lunar positions from calendar date (YYYY-MM-DD), time of day (hours), and elapsed mission time.
-    // Both are computed in the pad's local horizon frame and rotated into ECI by ecefToEci(..., t) so
-    // the sky always matches the Date and Time controls whether Cycle is on or Locked.
+    // On the pad and through the atmosphere, compute both in the pad frame and map to ECI so Date/Time
+    // and solar transits render identically as on Earth. Once in orbit/space, blend smoothly to the fixed
+    // launch-epoch inertial Sun direction so Earth spins beneath a steady Sun instead of looping daily.
     const simTimeForSky = syncCycle ? t : 0;
     const sunDirPad = sunDirectionAt(launchDate, timeOfDay, simTimeForSky);
     const moonDirPad = astronomicalMoonDirectionAt(launchDate, timeOfDay, simTimeForSky);
     const sunDirEci = ecefToEci(sunDirPad, t);
     const moonDirEci = ecefToEci(moonDirPad, t);
-    const sunVecEci = new THREE.Vector3(sunDirEci.x, sunDirEci.y, sunDirEci.z);
+    const sunDirLaunch = sunDirectionAt(launchDate, timeOfDay, 0);
+    const spaceSunBlend = flying ? THREE.MathUtils.smoothstep(sim.altitude, 140000, 250000) : 0;
+    const sunVecEci = new THREE.Vector3(sunDirEci.x, sunDirEci.y, sunDirEci.z)
+      .lerp(new THREE.Vector3(sunDirLaunch.x, sunDirLaunch.y, sunDirLaunch.z), spaceSunBlend)
+      .normalize();
 
     // Compute lunar transit dimming factor for 3D scene lights (rocket & pad)
     const sepX = sunDirEci.x - moonDirEci.x;
     const sepY = sunDirEci.y - moonDirEci.y;
     const sepZ = sunDirEci.z - moonDirEci.z;
     const sunMoonSep = Math.hypot(sepX, sepY, sepZ);
-    const transitLightFactor =
+    const rawTransitLight =
       0.03 + 0.97 * THREE.MathUtils.smoothstep(sunMoonSep, 0.0005, 0.0145);
+    const transitLightFactor = rawTransitLight + (1 - rawTransitLight) * spaceSunBlend;
 
     // Lights: the Sun, skylight fading with height, flame light on the pad.
     const sunWorld = toWorld(sunVecEci.clone());
@@ -788,7 +796,11 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         autoFramed.current.add("moon");
         lookPending.current = "moon";
       }
-      if (flying && sim.phase === "return" && !autoFramed.current.has("earth")) {
+      if (
+        flying &&
+        ((sim.hasPassedMoon && sim.altitude < 80000000 && sim.verticalSpeed < 0) || sim.phase === "return") &&
+        !autoFramed.current.has("earth")
+      ) {
         autoFramed.current.add("earth");
         lookPending.current = "earth";
       }

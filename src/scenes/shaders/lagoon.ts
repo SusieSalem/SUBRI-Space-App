@@ -42,11 +42,13 @@ void main() {
   vec3 L = normalize(uSunDir);
   float ndv = max(dot(N, V), 0.0);
   float fres = 0.03 + 0.97 * pow(1.0 - ndv, 5.0);
+  float day = smoothstep(-0.15, 0.25, L.y);
+  vec3 skyCol = mix(vec3(0.008, 0.015, 0.032), uSky, day);
   vec3 body = mix(uDeep, uShallow, 0.35 + 0.25 * N.x);
-  vec3 col = mix(body, uSky, fres);
+  vec3 col = mix(body, skyCol, fres);
   vec3 H = normalize(L + V);
-  col += vec3(1.0, 0.92, 0.78) * pow(max(dot(N, H), 0.0), 220.0) * 3.0;
-  col *= 0.55 + 0.45 * max(L.y, 0.0);
+  col += vec3(1.0, 0.92, 0.78) * pow(max(dot(N, H), 0.0), 220.0) * 3.0 * smoothstep(-0.04, 0.08, L.y);
+  col *= mix(0.025, 1.0, 0.35 * day + 0.65 * smoothstep(-0.05, 0.45, L.y));
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>

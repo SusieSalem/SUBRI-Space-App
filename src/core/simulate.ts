@@ -295,13 +295,32 @@ export class FlightSim {
     const max = this.serviceAttached ? Math.max(1, this.serviceProp + this.tcmDone) : 1;
     return { name: "Service module", fraction: this.serviceAttached ? this.serviceProp / max : 0 };
   }
+  get hasPassedMoon() {
+    return this.flybyPassed;
+  }
   /** Largest time warp allowed right now. */
   get maxWarp(): number {
     if (this.phase === "splashdown" || this.phase === "failed") return 1;
     if (this.phase === "parachutes") return 200;
     // Fixed 50 Hz physics steps here, so a higher warp only costs more steps per frame.
     if (this.onPad || this.throttle > 0 || this.altitude < ATMOSPHERE_TOP) return 100;
-    return 100000;
+    const alt = this.altitude;
+    const moonAlt = Math.max(0, this.moonDistance);
+    const returning = (this.flybyPassed && this.verticalSpeed < 0) || this.phase === "return";
+    // Throttle max warp near the Moon and during Earth return so neither auto nor manual warp skips through them.
+    let limit = 50000;
+    if (moonAlt < 60_000_000) {
+      limit = Math.min(limit, moonAlt < 3_000_000 ? 500 : moonAlt < 20_000_000 ? 2000 : 5000);
+    }
+    if (returning) {
+      if (alt < 2_000_000) limit = Math.min(limit, 100);
+      else if (alt < 12_000_000) limit = Math.min(limit, 500);
+      else if (alt < 45_000_000) limit = Math.min(limit, 2000);
+      else if (alt < 150_000_000) limit = Math.min(limit, 10000);
+    } else if (alt < 2_000_000) {
+      limit = Math.min(limit, 1000);
+    }
+    return limit;
   }
   /** Time until the next thing the autopilot will do (for auto warp). */
   get timeToNextEvent(): number {

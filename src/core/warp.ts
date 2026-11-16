@@ -29,8 +29,10 @@ export function autoWarp(sim: FlightSim, mode: WarpMode = "auto"): number {
   }
   // Engine burns (orbit insertion, TLI, corrections) at a fixed pace.
   if (sim.throttle > 0) return cap(fast ? 60 : 25);
-  // Coasting: aim to reach the next event in a few real seconds.
+  // Coasting: keep parking waits quick, then cruise cislunar legs over tens of seconds rather than 2-3s.
   const tn = sim.timeToNextEvent;
   if (!isFinite(tn)) return cap(fast ? 5000 : 1000);
-  return cap(tn / (fast ? 1.5 : 3));
+  if (sim.phase === "parking") return cap(tn / (fast ? 2 : 5));
+  const coastMax = fast ? 25000 : 10000;
+  return cap(Math.min(coastMax, tn / (fast ? 6 : 16)));
 }

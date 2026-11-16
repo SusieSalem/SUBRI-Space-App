@@ -36,6 +36,8 @@ import {
 } from "./audio/soundManager";
 import { LUNAR_ICE_TARGETS, getScannedLunarTargets } from "./core/lunarTargets";
 import { TutorialOverlay } from "./components/TutorialOverlay";
+import { PartPreview, type PreviewKind } from "./components/PartPreview";
+import { PartInspector } from "./components/PartInspector";
 import { MissionReport } from "./components/MissionReport";
 import { missionReport } from "./core/missionReport";
 import { ControlsHelp } from "./components/ControlsHelp";
@@ -67,7 +69,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   protection: "Protection",
 };
 
-const WARP_LEVELS = [1, 2, 4, 10, 50, 100, 1000, 10000, 100000];
+const WARP_LEVELS = [1, 2, 4, 10, 50, 100, 500, 1000, 2500, 5000, 10000, 25000, 50000];
 
 const fmt = new Intl.NumberFormat("en-US");
 
@@ -152,6 +154,12 @@ export default function App() {
   const [simVersion, setSimVersion] = useState(0);
   const [lookAt, setLookAt] = useState<{ body: "earth" | "moon"; n: number } | null>(null);
   const [hudCollapsed, setHudCollapsed] = useState(false);
+  const [hoveredModel, setHoveredModel] = useState<{ kind: PreviewKind; top: number } | null>(null);
+  const openInspector = (kind: PreviewKind, el: HTMLElement) => {
+    const rect = el.getBoundingClientRect();
+    const top = Math.max(72, Math.min(window.innerHeight - 370, rect.top));
+    setHoveredModel({ kind, top });
+  };
   const look = (body: "earth" | "moon") => setLookAt((l) => ({ body, n: (l?.n ?? 0) + 1 }));
 
   const t = useMemo(() => totals(parts), [parts]);
@@ -211,13 +219,13 @@ export default function App() {
   const stepWarp = useCallback(
     (dir: 1 | -1) => {
       setWarpSetting((w) => {
-        const cur = typeof w === "number" ? w : (tel?.warp ?? 1);
+        const cur = typeof w === "number" ? Math.min(w, tel?.maxWarp ?? w) : (tel?.warp ?? 1);
         let i = WARP_LEVELS.findIndex((l) => l >= cur);
         if (i < 0) i = WARP_LEVELS.length - 1;
         return WARP_LEVELS[Math.max(0, Math.min(WARP_LEVELS.length - 1, i + dir))];
       });
     },
-    [tel?.warp],
+    [tel?.warp, tel?.maxWarp],
   );
 
   // Keyboard: WASD steer, Shift/Ctrl throttle, Z full, X cut, T autopilot, M map, , . warp, P pause.
@@ -319,18 +327,24 @@ export default function App() {
 
       {mode === "assembly" && (
         <>
-          <aside className="panel left">
+          <aside className="panel left" onScroll={() => setHoveredModel(null)}>
             <h2>Spacecraft</h2>
             <p className="hint">Pick the parts. Some can't be fitted together.</p>
             {Object.keys(CATEGORY_LABEL).map((cat) => (
               <div key={cat} className="group">
                 <h3>{CATEGORY_LABEL[cat]}</h3>
                 {PARTS.filter((p) => p.category === cat).map((p) => (
-                  <label key={p.id} className={`part ${parts.includes(p.id) ? "on" : ""}`}>
+                  <label
+                    key={p.id}
+                    className={`part ${parts.includes(p.id) ? "on" : ""}`}
+                    onMouseEnter={(e) => openInspector(p.id, e.currentTarget)}
+                    onMouseLeave={() => setHoveredModel((cur) => (cur?.kind === p.id ? null : cur))}
+                  >
                     <input type="checkbox" checked={parts.includes(p.id)} onChange={() => {
                         playPartSnap(!parts.includes(p.id));
                         setParts((s) => togglePart(s, p.id));
                       }} />
+                    <PartPreview kind={p.id} hovered={hoveredModel?.kind === p.id} className="part-preview" />
                     <span className="part-body">
                       <span className="part-name">{p.name}</span>
                       <span className="part-desc">{p.description}</span>
@@ -348,10 +362,17 @@ export default function App() {
               {ROCKETS.map((r) => {
                 const fits = launchCheck(t.massKg, r.id).fits;
                 return (
-                  <button key={r.id} className={`rocket ${rocket === r.id ? "on" : ""}`} onClick={() => {
+                  <button
+                    key={r.id}
+                    className={`rocket ${rocket === r.id ? "on" : ""}`}
+                    onMouseEnter={(e) => openInspector(r.id, e.currentTarget)}
+                    onMouseLeave={() => setHoveredModel((cur) => (cur?.kind === r.id ? null : cur))}
+                    onClick={() => {
                       playRocketCheck(fits);
                       setRocket(r.id);
-                    }}>
+                    }}
+                  >
+                    <PartPreview kind={r.id} hovered={hoveredModel?.kind === r.id} className="rocket-preview" />
                     <span className="rocket-name">{r.name}</span>
                     <span className="mono small">{fmt.format(r.payloadToMoonKg)} kg</span>
                     <span className="mono small muted">${fmt.format(r.costMUsd)}M</span>
@@ -388,6 +409,16 @@ export default function App() {
               )}
             </label>
           </aside>
+
+          {hoveredModel && (
+            <PartInspector
+              kind={hoveredModel.kind}
+              top={hoveredModel.top}
+              selectedParts={parts}
+              selectedRocket={rocket}
+              spacecraftMassKg={t.massKg}
+            />
+          )}
 
           <aside className="panel right assembly">
             <h2>Readiness</h2>

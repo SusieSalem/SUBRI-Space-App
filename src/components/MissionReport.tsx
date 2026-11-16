@@ -13,7 +13,11 @@ const VERDICT_LABEL: Record<Report["verdict"], string> = {
   partial: "Crew home, with problems",
   failure: "Mission failed",
 };
-const VERDICT_CLASS: Record<Report["verdict"], "ok" | "warn" | "bad"> = { success: "ok", partial: "warn", failure: "bad" };
+const VERDICT_CLASS: Record<Report["verdict"], "ok" | "warn" | "bad"> = {
+  success: "ok",
+  partial: "warn",
+  failure: "bad",
+};
 
 const fmt = (n: number, digits = 0) =>
   isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: digits }) : "-";
@@ -25,8 +29,11 @@ interface Props {
   onFlyAgain: () => void;
 }
 
+type ReportTab = "debrief" | "learned";
+
 export function MissionReport({ report, onRedesign, onEditPlan, onFlyAgain }: Props) {
   const [open, setOpen] = useState(true);
+  const [tab, setTab] = useState<ReportTab>("debrief");
   const [playingId, setPlayingId] = useState<string | null>(null);
   const s = report.stats;
   const others = report.findings.filter((f) => f !== report.rootCause);
@@ -35,10 +42,14 @@ export function MissionReport({ report, onRedesign, onEditPlan, onFlyAgain }: Pr
     return () => stopAiVoice();
   }, []);
 
+  const stopPlayback = () => {
+    stopAiVoice();
+    setPlayingId(null);
+  };
+
   const toggleAudio = (id: string) => {
     if (playingId === id) {
-      stopAiVoice();
-      setPlayingId(null);
+      stopPlayback();
       return;
     }
     setPlayingId(id);
@@ -55,71 +66,96 @@ export function MissionReport({ report, onRedesign, onEditPlan, onFlyAgain }: Pr
     );
 
   return (
-    <div className="report-backdrop" role="dialog" aria-modal="true" aria-labelledby="report-title">
+    <div className="report-backdrop" role="dialog" aria-modal="false" aria-labelledby="report-title">
       <section className="mission-report">
         <header className="report-head">
-          <span className="label">Mission report</span>
-          <h2 id="report-title" className={VERDICT_CLASS[report.verdict]}>
-            {VERDICT_LABEL[report.verdict]}
-          </h2>
+          <div className="report-head-top">
+            <div>
+              <span className="label">Flight debrief</span>
+              <h2 id="report-title" className={VERDICT_CLASS[report.verdict]}>
+                {VERDICT_LABEL[report.verdict]}
+              </h2>
+            </div>
+            <button
+              type="button"
+              className="ghost report-close"
+              aria-label="Close the report"
+              title="Close and look at the scene"
+              onClick={() => {
+                stopPlayback();
+                setOpen(false);
+              }}
+            >
+              ×
+            </button>
+          </div>
           <p className="report-headline">{report.headline}</p>
-          <button
-            type="button"
-            className="ghost report-close"
-            aria-label="Close the report"
-            title="Close and look at the scene"
-            onClick={() => {
-              stopAiVoice();
-              setPlayingId(null);
-              setOpen(false);
-            }}
-          >
-            ×
-          </button>
+
+          {report.learned.length > 0 && (
+            <div className="report-tabs" role="tablist" aria-label="Mission report sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "debrief"}
+                className={`report-tab ${tab === "debrief" ? "on" : ""}`}
+                onClick={() => setTab("debrief")}
+              >
+                Summary
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "learned"}
+                className={`report-tab ${tab === "learned" ? "on" : ""}`}
+                onClick={() => setTab("learned")}
+              >
+                What you learned ({report.learned.length})
+              </button>
+            </div>
+          )}
         </header>
 
-        <div className="report-stats">
-          <Stat label="Mission time" value={`${fmt(s.missionDays, 1)} d`} />
-          <Stat label="Closest to the Moon" value={isFinite(s.closestMoonKm) ? `${fmt(s.closestMoonKm)} km` : "-"} />
-          <Stat label="Farthest from Earth" value={`${fmt(s.maxAltitudeKm)} km`} />
-          <Stat label="Max g / re-entry g" value={`${fmt(s.maxG, 1)} / ${fmt(s.entryMaxG, 1)}`} />
-          <Stat label="Life support left" value={`${fmt(s.lifeSupportLeftDays, 1)} of ${fmt(s.lifeSupportDays, 1)} d`} />
-          <Stat label="Cost / budget" value={`$${fmt(s.costMUsd)}M / $${fmt(s.budgetMUsd)}M`} />
-        </div>
-
-        {report.rootCause && (
-          <div className="report-block">
-            <h3>Root cause</h3>
-            <FindingItem f={report.rootCause} root />
-          </div>
-        )}
-
-        {others.length > 0 && (
-          <div className="report-block">
-            <h3>{report.rootCause ? "Other findings" : "Findings"}</h3>
-            <ul className="report-findings">
-              {others.map((f, i) => (
-                <li key={i}>
-                  <FindingItem f={f} />
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {report.learned.length > 0 && (
-          <div className="report-block">
-            <h3>What you learned</h3>
-            <div className="report-learned">
-              {report.learned.map((e) => (
-                <Explanation
-                  key={e.id}
-                  e={e}
-                  playing={playingId === e.id}
-                  onToggleAudio={() => toggleAudio(e.id)}
-                />
-              ))}
+        {tab === "debrief" ? (
+          <>
+            <div className="report-stats">
+              <Stat label="Time" value={`${fmt(s.missionDays, 1)} d`} />
+              <Stat label="Min Moon dist" value={isFinite(s.closestMoonKm) ? `${fmt(s.closestMoonKm)} km` : "-"} />
+              <Stat label="Max altitude" value={`${fmt(s.maxAltitudeKm)} km`} />
+              <Stat label="Peak / entry g" value={`${fmt(s.maxG, 1)} / ${fmt(s.entryMaxG, 1)}`} />
+              <Stat label="Life support" value={`${fmt(s.lifeSupportLeftDays, 1)} / ${fmt(s.lifeSupportDays, 1)} d`} />
+              <Stat label="Budget" value={`$${fmt(s.costMUsd)}M / $${fmt(s.budgetMUsd)}M`} />
             </div>
+
+            {report.rootCause && (
+              <div className="report-block">
+                <h3>Root cause</h3>
+                <FindingItem f={report.rootCause} root />
+              </div>
+            )}
+
+            {others.length > 0 && (
+              <div className="report-block">
+                <h3>{report.rootCause ? "Other findings" : "Findings"}</h3>
+                <ul className="report-findings">
+                  {others.map((f, i) => (
+                    <li key={i}>
+                      <FindingItem f={f} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="report-learned">
+            {report.learned.map((e) => (
+              <Explanation
+                key={e.id}
+                e={e}
+                playing={playingId === e.id}
+                onToggleAudio={() => toggleAudio(e.id)}
+              />
+            ))}
           </div>
         )}
 
@@ -128,29 +164,26 @@ export function MissionReport({ report, onRedesign, onEditPlan, onFlyAgain }: Pr
             type="button"
             className="primary"
             onClick={() => {
-              stopAiVoice();
-              setPlayingId(null);
+              stopPlayback();
               onRedesign();
             }}
           >
-            Redesign the spacecraft
+            Redesign spacecraft
           </button>
           <button
             type="button"
             onClick={() => {
-              stopAiVoice();
-              setPlayingId(null);
+              stopPlayback();
               onEditPlan();
             }}
           >
-            Change the orbit plan
+            Edit orbit plan
           </button>
           <button
             type="button"
             className="ghost"
             onClick={() => {
-              stopAiVoice();
-              setPlayingId(null);
+              stopPlayback();
               onFlyAgain();
             }}
           >
@@ -175,10 +208,13 @@ function FindingItem({ f, root = false }: { f: Finding; root?: boolean }) {
   const terms = f.severity === "ok" ? [] : explanationsFor(f.area).map((e) => e.term);
   return (
     <div className={`report-finding sev-${f.severity}${root ? " root" : ""}`}>
-      <span className="finding-title">{f.title}</span>
-      <span className="small">{f.detail}</span>
-      {f.fix && <span className="small finding-fix">What to change: {f.fix}</span>}
-      {terms.length > 0 && <span className="small muted">See below: {terms.join(", ")}</span>}
+      <div className="report-finding-head">
+        <span className={`finding-dot sev-${f.severity}`} aria-hidden="true" />
+        <span className="finding-title">{f.title}</span>
+      </div>
+      <span className="small muted">{f.detail}</span>
+      {f.fix && <span className="small finding-fix">{f.fix}</span>}
+      {terms.length > 0 && <span className="small muted">Topics: {terms.join(", ")}</span>}
     </div>
   );
 }
@@ -206,12 +242,14 @@ function Explanation({
           {playing ? "Stop" : "Listen"}
         </button>
       </div>
-      <span className="small">{e.shortExplanation}</span>
+      <span className="small muted">{e.shortExplanation}</span>
       <span className="small finding-fix">Tip: {e.tradeOffTip}</span>
-      <code className="report-formula">{e.formula}</code>
-      <a className="small" href={e.sourceUrl} target="_blank" rel="noreferrer">
-        Source: {e.sourceLabel}
-      </a>
+      <div className="explanation-meta">
+        <code className="report-formula">{e.formula}</code>
+        <a className="small" href={e.sourceUrl} target="_blank" rel="noreferrer">
+          {e.sourceLabel}
+        </a>
+      </div>
     </article>
   );
 }
