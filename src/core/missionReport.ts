@@ -9,13 +9,15 @@
 // For the interface: when the telemetry says done or failed, call
 //   missionReport(simRef.current, parts, rocket, stormResult)
 // and show `headline`, then `findings` (each with severity, title, detail and
-// fix) and the numbers in `stats`.
+// fix), the numbers in `stats` and the explanations in `learned`.
 
 import { MISSION_REQUIREMENTS, PARTS_BY_ID, totals, type PartId } from "./design";
 import { ROCKETS_BY_ID, launchCheck, type RocketId } from "./launchCheck";
 import { R_EARTH, R_MOON, type Vec3 } from "./orbit";
 import { freeReturn, type FlightSim } from "./simulate";
 import type { StormResult } from "./spaceWeather";
+import { explanationsFor } from "./explanations";
+import type { EducationalExplanation } from "../types/mission";
 
 export type Severity = "ok" | "warn" | "bad";
 
@@ -64,6 +66,12 @@ export interface MissionReport {
   /** Everything worth telling, worst first. */
   findings: Finding[];
   stats: MissionStats;
+  /**
+   * "What you learned": the ideas behind the root cause and every finding that
+   * was not ok, root cause first, each once, with its NASA source. For one
+   * finding alone use explanationsFor(finding.area) from ./explanations.
+   */
+  learned: EducationalExplanation[];
 }
 
 /* ---------------------------------------------------------- thresholds */
@@ -129,7 +137,27 @@ export function missionReport(
   // On a splashdown with problems, the worst one is what to fix first.
   if (verdict === "partial") rootCause = ordered.find((f) => f.severity === "bad") ?? null;
 
-  return { verdict, headline: headlineOf(verdict, sim, stats, rootCause), rootCause, findings: ordered, stats };
+  return {
+    verdict,
+    headline: headlineOf(verdict, sim, stats, rootCause),
+    rootCause,
+    findings: ordered,
+    stats,
+    learned: learnedFrom(rootCause, ordered),
+  };
+}
+
+function learnedFrom(rootCause: Finding | null, findings: Finding[]): EducationalExplanation[] {
+  const seen = new Set<string>();
+  const out: EducationalExplanation[] = [];
+  const relevant = [...(rootCause ? [rootCause] : []), ...findings.filter((f) => f.severity !== "ok")];
+  for (const f of relevant)
+    for (const e of explanationsFor(f.area))
+      if (!seen.has(e.id)) {
+        seen.add(e.id);
+        out.push(e);
+      }
+  return out;
 }
 
 function statsOf(sim: FlightSim, parts: PartId[], rocket: RocketId): MissionStats {
