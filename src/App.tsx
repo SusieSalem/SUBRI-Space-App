@@ -126,7 +126,7 @@ function advanceDateAndTime(baseDateStr: string, baseHours: number, elapsedSec: 
 
 export default function App() {
   const [mode, setMode] = useState<Mode>("assembly");
-  const [parts, setParts] = useState<PartId[]>(["capsule", "serviceLarge", "lifeSupport7", "solarPanels"]);
+  const [parts, setParts] = useState<PartId[]>(["capsule", "serviceLarge", "lifeSupport14", "solarPanels"]);
   const [rocket, setRocket] = useState<RocketId>("heavy");
   const [plan, setPlan] = useState<OrbitPlan>(DEFAULT_PLAN);
   /** The plan the current flight is flying (null: the autopilot planned it). */
