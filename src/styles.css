@@ -2063,3 +2063,166 @@ button.suggest {
     transform: scaleX(0);
   }
 }
+
+/* Mission report (shown when the flight ends) */
+.report-backdrop {
+  position: absolute;
+  inset: 0;
+  /* Above the tutorial guide (60-61), which repeats the same alert. */
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 72px 16px 24px;
+  background: rgba(0, 0, 0, 0.35);
+}
+.mission-report {
+  position: relative;
+  width: min(720px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--faint) transparent;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: rgba(10, 14, 22, 0.82);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  text-shadow: var(--glass-text-shadow);
+}
+.report-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 32px;
+}
+.report-head h2 {
+  margin: 0;
+  font-size: 22px;
+}
+.report-headline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.report-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+.report-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--glass-bg-hi);
+  border-radius: var(--glass-radius-sm);
+}
+.report-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.report-stat .value {
+  font-size: 13px;
+}
+.report-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.report-block h3 {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.report-findings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.report-finding,
+.report-explanation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--glass-border);
+  border-left-width: 3px;
+  border-radius: var(--glass-radius-sm);
+}
+.report-finding.sev-ok {
+  border-left-color: var(--ok);
+}
+.report-finding.sev-warn {
+  border-left-color: var(--warn);
+}
+.report-finding.sev-bad {
+  border-left-color: var(--bad);
+}
+.report-finding.root {
+  background: rgba(248, 113, 113, 0.08);
+}
+.report-finding.root.sev-warn {
+  background: rgba(251, 191, 36, 0.08);
+}
+.report-explanation {
+  border-left-color: var(--accent);
+}
+.finding-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.finding-fix {
+  color: var(--text);
+}
+.report-learned {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+}
+.report-formula {
+  font-family: "Space Mono", ui-monospace, monospace;
+  font-size: 11px;
+  padding: 4px 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+.report-explanation a {
+  color: inherit;
+  text-decoration: underline;
+}
+.report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.report-reopen {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+}
+@media (max-width: 640px) {
+  .report-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

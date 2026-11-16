@@ -36,6 +36,8 @@ import {
 } from "./audio/soundManager";
 import { LUNAR_ICE_TARGETS, getScannedLunarTargets } from "./core/lunarTargets";
 import { TutorialOverlay } from "./components/TutorialOverlay";
+import { MissionReport } from "./components/MissionReport";
+import { missionReport } from "./core/missionReport";
 import { ControlsHelp } from "./components/ControlsHelp";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { WarpControl as WarpStepper } from "./components/WarpControl";
@@ -160,6 +162,12 @@ export default function App() {
   const canLaunch = blockers.length === 0 && check.fits && !overBudget;
   const storm = STORMS_BY_ID[stormId] ?? null;
   const stormIsDangerous = !!storm && radiationScale(storm.protonFluxPfu) >= 2;
+  // The mission report, built once the flight has ended (splashdown or lost).
+  const flightOver = mode === "flight" && !!tel && (tel.done || tel.failed);
+  const report = useMemo(
+    () => (flightOver ? missionReport(simRef.current, parts, rocket, stormResult) : null),
+    [flightOver, parts, rocket, stormResult, simVersion],
+  );
 
   // A fresh vehicle on the pad whenever the design changes before launch.
   useEffect(() => {
@@ -649,6 +657,24 @@ export default function App() {
               <ControlsHelp />
             </div>
           </footer>
+          {report && (
+            <MissionReport
+              key={simVersion}
+              report={report}
+              onRedesign={() => {
+                playClick();
+                backTo("assembly");
+              }}
+              onEditPlan={() => {
+                playClick();
+                backTo("planning");
+              }}
+              onFlyAgain={() => {
+                playClick();
+                launch(flownPlan);
+              }}
+            />
+          )}
         </>
       )}
     </div>
