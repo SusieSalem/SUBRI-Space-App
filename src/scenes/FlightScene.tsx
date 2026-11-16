@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { Bloom, EffectComposer, ToneMapping, Vignette } from "@react-three/postprocessing";
+import { RainLens, rainState } from "./RainLens";
 import { ToneMappingMode } from "postprocessing";
 import * as THREE from "three";
 import { Line2 } from "three/examples/jsm/lines/Line2.js";
@@ -189,6 +190,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   const padLightRef = useRef<THREE.PointLight>(null);
   const skyRef = useRef<THREE.Mesh>(null);
   const cloudOverlayRef = useRef<THREE.Mesh>(null);
+  const waterMaskRef = useRef<THREE.Mesh>(null);
+  const waterStencilRef = useRef<THREE.Mesh>(null);
+  const waterOverlayRef = useRef<THREE.Mesh>(null);
   const linesRef = useRef<THREE.Group>(null);
   const [smokePoints, smoke] = useSmoke();
   const debris = useRef<Partial<Record<PieceId | "serviceModule", Debris>>>({});
@@ -312,8 +316,28 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   }, []);
 
   // New flight: reset debris, events, camera.
+  const crashPieces = useRef<
+    Partial<
+      Record<
+        PieceId,
+        {
+          pos: THREE.Vector3;
+          vel: THREE.Vector3;
+          rot: THREE.Euler;
+          spin: THREE.Vector3;
+          pivotY: number;
+          splashed: boolean;
+          submerged: boolean;
+        }
+      >
+    >
+  >({});
+  const crashTriggered = useRef(false);
+
   useEffect(() => {
     debris.current = {};
+    crashPieces.current = {};
+    crashTriggered.current = false;
     eventIndex.current = 0;
     sounds.current.clear();
     lastPhaseSound.current = "prelaunch";
@@ -520,7 +544,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       grp.quaternion.copy(qFrame).multiply(d.q).multiply(spinQ);
     }
 
-    // Attached pieces ride with the spacecraft at the origin.
+    // Attached pieces ride with the spacecraft at the origin (or scatter apart on crash).
     if (handle) {
       const att = sim.attached;
       const attachedMap: Record<PieceId, boolean> = {
@@ -530,12 +554,94 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         escapeTower: att.escapeTower,
         spacecraft: true,
       };
+
+      if (sim.phase === "failed" && !crashTriggered.current) {
+        crashTriggered.current = true;
+        playPartSnap(false);
+        const pivotByPiece: Record<PieceId, number> = {
+          boosters: dims.stage2Base * 0.4,
+          stage1: dims.stage2Base * 0.5,
+          stage2: (dims.stage2Base + dims.capsuleBase) * 0.5,
+          spacecraft: (dims.capsuleBase + dims.total) * 0.5,
+          escapeTower: dims.total * 0.96,
+        };
+        const activeIds = (Object.keys(attachedMap) as PieceId[]).filter((id) => attachedMap[id]);
+        activeIds.forEach((id, idx) => {
+          const ang = (idx / Math.max(1, activeIds.length)) * Math.PI * 2 + Math.random() * 0.7;
+          const speed = 10 + Math.random() * 14;
+          crashPieces.current[id] = {
+            pos: new THREE.Vector3(0, 0, 0),
+            vel: new THREE.Vector3(
+              Math.cos(ang) * speed,
+              8 + Math.random() * 14,
+              Math.sin(ang) * speed,
+            ),
+            rot: new THREE.Euler(0, 0, 0),
+            spin: new THREE.Vector3(
+              (Math.random() - 0.5) * 4.5,
+              (Math.random() - 0.5) * 3.0,
+              (Math.random() - 0.5) * 4.5,
+            ),
+            pivotY: pivotByPiece[id],
+            splashed: false,
+            submerged: false,
+          };
+        });
+      }
+
       for (const id of Object.keys(attachedMap) as PieceId[]) {
         const g = handle.pieces[id];
         if (!g || !attachedMap[id]) continue;
-        g.visible = true;
-        g.position.set(0, 0, 0);
-        g.quaternion.copy(qBody);
+        const cp = sim.phase === "failed" ? crashPieces.current[id] : undefined;
+        if (cp) {
+          if (cp.submerged) {
+            g.visible = false;
+            continue;
+          }
+          g.visible = true;
+          if (!cp.splashed) {
+            cp.vel.y -= 9.81 * realDt;
+          } else {
+            // Sinking underwater: heavy water drag slows horizontal drift and pulls piece down
+            cp.vel.y = -3.4;
+            cp.vel.x *= Math.max(0, 1 - realDt * 2.4);
+            cp.vel.z *= Math.max(0, 1 - realDt * 2.4);
+            cp.spin.multiplyScalar(Math.max(0, 1 - realDt * 1.8));
+          }
+          cp.pos.addScaledVector(cp.vel, realDt);
+          cp.rot.x += cp.spin.x * realDt;
+          cp.rot.y += cp.spin.y * realDt;
+          cp.rot.z += cp.spin.z * realDt;
+          const pivotBase = new THREE.Vector3(0, cp.pivotY, 0).applyQuaternion(qBody);
+          const centerY = cp.pos.y + pivotBase.y;
+          if (!cp.splashed && centerY <= 0.4) {
+            cp.splashed = true;
+            cp.vel.x *= 0.3;
+            cp.vel.z *= 0.3;
+            cp.vel.y = -3.4;
+            cp.spin.multiplyScalar(0.35);
+          }
+          if (cp.splashed && centerY < -14) {
+            cp.submerged = true;
+            g.visible = false;
+            continue;
+          }
+          const qTotal = qBody.clone().multiply(new THREE.Quaternion().setFromEuler(cp.rot));
+          const pivotRot = new THREE.Vector3(0, cp.pivotY, 0).applyQuaternion(qTotal);
+          g.position.copy(cp.pos).add(pivotBase).sub(pivotRot);
+          g.quaternion.copy(qTotal);
+        } else if (id === "spacecraft" && sim.phase === "splashdown") {
+          g.visible = true;
+          const tBob = state.clock.elapsedTime;
+          g.position.set(0, Math.sin(tBob * 2.1) * 0.28 + Math.cos(tBob * 1.3) * 0.1, 0);
+          const tilt = new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(Math.sin(tBob * 1.7) * 0.055, 0, Math.cos(tBob * 1.4) * 0.065),
+          );
+          g.quaternion.copy(qBody).multiply(tilt);
+        } else {
+          g.position.set(0, 0, 0);
+          g.quaternion.copy(qBody);
+        }
       }
 
       // Exhaust: one plume per stage, longer and wider as the air thins.
@@ -548,7 +654,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         [p.stage2, sim.burning.stage2],
       ] as const) {
         u.uTime.value = time;
-        const target = on ? throttle : 0;
+        // Values above 1 brighten the flame (the shader keeps opacity capped at 1).
+        const flameBoost = 1.6 + 2.4 * (1 - Math.min(1, Math.max(0, sim.altitude / 4000)));
+        const target = on ? throttle * flameBoost : 0;
         u.uThrottle.value += (target - u.uThrottle.value) * Math.min(1, realDt * 10);
       }
       handle.setPlumeLength(1 + 3 * (1 - pressureRatio(sim.altitude)));
@@ -649,7 +757,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     }
     if (padLightRef.current) {
       const on = sim.burning.stage1 || sim.burning.boosters;
-      padLightRef.current.intensity = on ? 3000 * sim.throttle * Math.max(0, 1 - sim.altitude / 800) * (0.85 + 0.3 * Math.random()) : 0;
+      padLightRef.current.intensity = on ? 14000 * sim.throttle * Math.max(0, 1 - sim.altitude / 1200) * (0.85 + 0.3 * Math.random()) : 0;
     }
 
     // Camera follows the middle of whatever is still attached.
@@ -662,7 +770,11 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       controls.target.copy(centre);
       prevTarget.current.copy(centre);
       const camDistToTarget = Math.max(10, camera.position.distanceTo(centre));
-      const groundCos = Math.max(-0.92, Math.min(0.03, (2.2 - centre.y) / camDistToTarget));
+      const waterFloorY =
+        !sim.attached.stage1 && !sim.attached.stage2
+          ? dims.capsuleBase + 0.8
+          : 2.2;
+      const groundCos = Math.max(-0.92, Math.min(0.03, (waterFloorY - centre.y) / camDistToTarget));
       controls.maxPolarAngle = flying && sim.altitude > 200 ? Math.PI : Math.acos(groundCos);
 
       // Frame the Moon on the way in and the Earth on the way home, once each.
@@ -687,7 +799,46 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     }
 
     // Sky / planet shader inputs, all relative to the camera in double precision.
-    const camEciOffset = camera.position.clone().applyQuaternion(qFrame.clone().invert());
+    const activeBaseY =
+      sim.attached.stage1 || sim.attached.boosters
+        ? 0
+        : sim.attached.stage2
+          ? dims.stage2Base
+          : dims.capsuleBase - 0.6;
+    const baseOffsetWorld = new THREE.Vector3(0, activeBaseY, 0).applyQuaternion(qBody);
+    const padDist = Math.hypot(sim.r.x - padEci.x, sim.r.y - padEci.y, sim.r.z - padEci.z);
+    const showSurface = flying && !sim.onPad && sim.altitude < 400;
+    const overOcean = showSurface && padDist > 1200;
+    const overLand = showSurface && !overOcean;
+    if (waterMaskRef.current || waterOverlayRef.current || waterStencilRef.current) {
+      const upWorld = showSurface
+        ? toWorld(new THREE.Vector3(sim.r.x, sim.r.y, sim.r.z)).normalize()
+        : new THREE.Vector3(0, 1, 0);
+      const seaLevelPos = baseOffsetWorld.clone().addScaledVector(upWorld, -sim.altitude);
+
+      if (waterMaskRef.current) {
+        waterMaskRef.current.visible = overLand;
+        if (overLand) {
+          waterMaskRef.current.position.copy(seaLevelPos);
+          waterMaskRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), upWorld);
+        }
+      }
+      if (waterStencilRef.current) {
+        waterStencilRef.current.visible = overOcean;
+        if (overOcean) {
+          waterStencilRef.current.position.copy(camera.position);
+        }
+      }
+      if (waterOverlayRef.current) {
+        waterOverlayRef.current.visible = overOcean;
+        if (overOcean) {
+          waterOverlayRef.current.position.copy(seaLevelPos);
+          waterOverlayRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), upWorld);
+        }
+      }
+    }
+    const camRelToVehicleBase = camera.position.clone().sub(baseOffsetWorld);
+    const camEciOffset = camRelToVehicleBase.applyQuaternion(qFrame.clone().invert());
     const camEci = { x: sim.r.x + camEciOffset.x, y: sim.r.y + camEciOffset.y, z: sim.r.z + camEciOffset.z };
     const camR = Math.hypot(camEci.x, camEci.y, camEci.z);
     const u = skyUniforms;
@@ -700,6 +851,46 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     const north = ecefToEci({ x: 0, y: 0, z: 1 }, t);
     u.uPadEast.value.set(east.x, east.y, east.z);
     u.uPadNorth.value.set(north.x, north.y, north.z);
+
+    // Screen rain (RainLens): same conditions as the sky shader's rain, below the cloud tops near the pad.
+    {
+      const wv = WEATHER_VALUE[weather];
+      const alt = camR - R_EARTH;
+      const padDist = Math.hypot(camEci.x - padEci.x, camEci.y - padEci.y, camEci.z - padEci.z);
+      const smooth = (a: number, b: number, x: number) => {
+        const k = Math.min(1, Math.max(0, (x - a) / (b - a)));
+        return k * k * (3 - 2 * k);
+      };
+      let streaks = 0;
+      let lens = 0;
+      if (wv > 1.5 && padDist < 120000) {
+        const storm = wv > 2.5;
+        const inCloud = smooth(1250, 2350, alt) * (1 - smooth(2850, 4550, alt));
+        const below = 1 - smooth(4080, 4560, alt);
+        streaks = below * (storm ? 1.5 : 0.95) * (1 + inCloud * 0.5);
+        lens = below * (storm ? 1.4 : 0.8) * (1 + inCloud * 0.6);
+      }
+      rainState.streaks = streaks;
+      rainState.lens = lens;
+      rainState.high = quality === "high";
+      // Which way "down" (plus a little wind towards the east) points on screen.
+      const persp = camera as THREE.PerspectiveCamera;
+      const fwd = new THREE.Vector3();
+      camera.getWorldDirection(fwd);
+      const p0 = camera.position.clone().addScaledVector(fwd, 60);
+      const p1 = p0.clone().add(new THREE.Vector3(wv > 2.5 ? 2.5 : 1.0, -10, 0));
+      const a0 = p0.clone().project(camera);
+      const a1 = p1.clone().project(camera);
+      const fall = new THREE.Vector2((a1.x - a0.x) * persp.aspect, a1.y - a0.y);
+      // A 10 m drop 60 m away looks about 0.2 screen-heights long when you look level.
+      rainState.fallAmount = Math.min(1, fall.length() / 0.2);
+      if (fall.lengthSq() > 1e-6) rainState.fall.copy(fall.normalize());
+      // Camera yaw and pitch, scaled to screen units, so the streaks stay anchored when you turn.
+      const k = 1 / (2 * Math.tan(THREE.MathUtils.degToRad(persp.fov) / 2));
+      rainState.scroll.set(Math.atan2(fwd.x, fwd.z) * k, Math.asin(Math.max(-1, Math.min(1, fwd.y))) * k);
+      const sunUp = sunWorld.y / Math.max(sunWorld.length(), 1e-6);
+      rainState.light = 0.04 + 0.5 * smooth(-0.1, 0.3, sunUp);
+    }
 
     // Near Earth (on the pad or during ascent), position the visual Moon using the J2000 astronomical
     // lunar ephemeris relative to the camera so historical solar transits and lunar phases align accurately;
@@ -782,7 +973,8 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     skyRef.current?.position.copy(camera.position);
     if (cloudOverlayRef.current) {
       cloudOverlayRef.current.position.copy(camera.position);
-      cloudOverlayRef.current.visible = camR - R_EARTH > 1550 && sim.altitude < 4200;
+      cloudOverlayRef.current.visible =
+        (camR - R_EARTH > 1550 || WEATHER_VALUE[weather] > 1.5) && sim.altitude < 4200;
     }
 
     // Predicted path (KSP-style orbit line), refreshed a couple of times a second.
@@ -878,9 +1070,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       <group ref={siteRef}>
         <LaunchSite rocket={rocket} parts={parts} armSwing={armSwing} />
         <primitive object={smokePoints} />
-        <pointLight ref={padLightRef} position={[0, MOUNT_HEIGHT - 2, 6]} color="#ff8a3d" distance={400} decay={2} />
+        <pointLight ref={padLightRef} position={[0, MOUNT_HEIGHT - 2, 6]} color="#ff8a3d" distance={900} decay={2} />
         {!flying && (
-          <group position={[8 + 6, 0, 10]} rotation={[0, -0.6, 0]}>
+          <group position={[8 + 6, MOUNT_HEIGHT, 10]} rotation={[0, -0.6, 0]}>
             <Astronaut height={1.8} />
           </group>
         )}
@@ -900,6 +1092,46 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
         <primitive object={moonLine} />
         <primitive object={artemis.line} />
       </group>
+
+      {/* Depth-only land mask so crash debris on land is occluded by terrain */}
+      <mesh ref={waterMaskRef} renderOrder={-10} frustumCulled={false} visible={false}>
+        <circleGeometry args={[5000, 32]} />
+        <meshBasicMaterial colorWrite={false} depthWrite side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* Stencil marker for any 3D mesh pixel (depth < 1.0), used to tint only submerged parts */}
+      <mesh ref={waterStencilRef} renderOrder={14} frustumCulled={false} visible={false}>
+        <sphereGeometry args={[1e8, 16, 12]} />
+        <meshBasicMaterial
+          side={THREE.BackSide}
+          colorWrite={false}
+          depthWrite={false}
+          depthTest
+          depthFunc={THREE.GreaterDepth}
+          stencilWrite
+          stencilRef={1}
+          stencilFunc={THREE.AlwaysStencilFunc}
+          stencilZPass={THREE.ReplaceStencilOp}
+          stencilFail={THREE.KeepStencilOp}
+          stencilZFail={THREE.KeepStencilOp}
+        />
+      </mesh>
+
+      {/* Translucent ocean water overlay over submerged rocket/capsule parts */}
+      <mesh ref={waterOverlayRef} renderOrder={15} frustumCulled={false} visible={false}>
+        <circleGeometry args={[5000, 32]} />
+        <meshBasicMaterial
+          color="#135c7d"
+          transparent
+          opacity={0.62}
+          depthWrite={false}
+          depthTest
+          side={THREE.DoubleSide}
+          stencilWrite={false}
+          stencilRef={1}
+          stencilFunc={THREE.EqualStencilFunc}
+        />
+      </mesh>
 
       <mesh ref={cloudOverlayRef} renderOrder={20} frustumCulled={false} visible={false}>
         <sphereGeometry args={[1e8, 32, 16]} />
@@ -979,7 +1211,7 @@ export default function FlightScene(props: Props) {
       shadows
       flat
       dpr={quality === "high" ? [0.75, 1] : [0.5, 0.75]}
-      gl={{ antialias: false, logarithmicDepthBuffer: true, powerPreference: "high-performance" }}
+      gl={{ antialias: false, logarithmicDepthBuffer: true, stencil: true, powerPreference: "high-performance" }}
       camera={{ position: [70, 30, 100], fov: 45, near: 0.5, far: 5e9 }}
     >
       <World {...props} />
@@ -987,12 +1219,14 @@ export default function FlightScene(props: Props) {
       <OrbitControls makeDefault enableDamping dampingFactor={0.08} minDistance={15} maxDistance={2e9} enablePan={false} zoomSpeed={1.4} />
       {quality === "high" ? (
         <EffectComposer multisampling={0}>
+          <RainLens />
           <Bloom intensity={0.6} luminanceThreshold={1.2} luminanceSmoothing={0.3} mipmapBlur />
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
           <Vignette offset={0.25} darkness={0.55} />
         </EffectComposer>
       ) : (
         <EffectComposer multisampling={0}>
+          <RainLens />
           <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
         </EffectComposer>
       )}

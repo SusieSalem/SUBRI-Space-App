@@ -500,8 +500,19 @@ export default function App() {
           persona={mode === "flight" ? "space" : "earth"}
           open={mode === "flight" ? spaceAiOpen : tutorialOpen}
           onOpenChange={mode === "flight" ? setSpaceAiOpen : setTutorialOpen}
-          flightPhase={tel?.phase}
-          altitudeM={tel?.altitude}
+          canLaunch={canLaunch}
+          buildIssues={[
+            ...blockers.map((b) => b.message),
+            ...(!check.fits ? [`Mass exceeds ${ROCKETS_BY_ID[rocket].name} limit.`] : []),
+            ...(overBudget ? [`Cost exceeds $${MISSION_REQUIREMENTS.budgetMUsd}M budget.`] : []),
+          ]}
+          weather={weather}
+          timeOfDay={displayTime}
+          stormExposed={stormResult?.outcome === "exposed"}
+          telemetry={tel}
+          mapView={mapView}
+          onToggleMap={() => setMapView((m) => !m)}
+          onToggleAutopilot={() => simRef.current.setAutopilot(!simRef.current.autopilot)}
         />
       )}
 

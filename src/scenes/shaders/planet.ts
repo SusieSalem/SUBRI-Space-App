@@ -578,6 +578,157 @@ vec4 sampleCirrus(vec3 up, float h0, float mu, vec3 d, vec3 L, float tLimit, flo
   vec3 col = (sunCol * phase * (1.0 - 0.35 * dens) + amb) * alpha;
   return vec4(col, 1.0 - alpha);
 }
+
+// Raindrop ripples & 3D falling rain streaks (intensifying inside rain/storm clouds).
+float rainHash12(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 19.19);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+vec2 rainHash22(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+  p3 += dot(p3, p3.yzx + 19.19);
+  return fract((p3.xx + p3.yz) * p3.zy);
+}
+
+vec3 rainRipples(vec2 fragCoord, float time, float intensity) {
+  float cell_density = 5.0 * intensity;
+  float size_compensation = cell_density / 5.0;
+  vec2 uv = fragCoord * cell_density;
+  vec2 p0 = floor(uv);
+  const float wave_frequency = 21.0;
+  vec2 circles = vec2(0.0);
+  for (int j = -1; j <= 1; ++j) {
+    for (int i = -1; i <= 1; ++i) {
+      vec2 pi = p0 + vec2(float(i), float(j));
+      vec2 p = pi + rainHash22(pi);
+      float t = fract(0.9 * time + rainHash12(pi));
+      vec2 v = p - uv;
+      float vLen = max(length(v), 1e-4);
+      float d = vLen - (2.0 * t) * size_compensation;
+      const float h = 1e-2;
+      float d1 = d - h;
+      float d2 = d + h;
+      float p1 = sin(wave_frequency * d1) * smoothstep(-0.6, -0.3, d1) * smoothstep(0.0, -0.3, d1);
+      float p2 = sin(wave_frequency * d2) * smoothstep(-0.6, -0.3, d2) * smoothstep(0.0, -0.3, d2);
+      circles += 0.5 * (v / vLen) * ((p2 - p1) / (2.0 * h) * (1.0 - t) * (1.0 - t));
+    }
+  }
+  circles /= 9.0;
+  return vec3(circles.x, sqrt(max(0.05, 1.0 - dot(circles, circles))), circles.y);
+}
+
+// Camera-lens raindrop distortion (returns normal offset in screen-aligned tangent space)
+vec2 sampleLensDrops(vec2 uv, float time, float intensity) {
+  vec2 totalOffset = vec2(0.0);
+  for (int i = 0; i < 2; ++i) {
+    float scale = i == 0 ? 7.5 : 13.0;
+    float speed = i == 0 ? 0.55 : 0.85;
+    vec2 aspect = vec2(scale * 1.4, scale * 0.72);
+    vec2 st = uv * aspect;
+    st.y += time * speed;
+    vec2 id = floor(st);
+    vec2 f = fract(st) - 0.5;
+    vec2 rnd = rainHash22(id + float(i) * 37.1);
+    float spawn = smoothstep(1.0 - clamp(0.22 * intensity, 0.05, 0.65), 1.0, rnd.x);
+    if (spawn > 0.01) {
+      vec2 dropPos = (rnd - 0.5) * 0.45;
+      float wobble = sin(st.y * 2.2 + rnd.y * 6.283) * 0.06;
+      vec2 delta = f - vec2(dropPos.x + wobble, dropPos.y);
+      delta.y *= 1.45;
+      float r = length(delta);
+      float dropMask = smoothstep(0.24, 0.04, r) * spawn;
+      // Subtle trailing streak above the sliding droplet
+      float trail = smoothstep(0.08, 0.01, abs(delta.x)) * smoothstep(-0.02, 0.35, delta.y) * smoothstep(0.42, 0.12, delta.y) * 0.4 * spawn;
+      totalOffset += (delta / max(r, 0.03)) * (dropMask + trail) * (i == 0 ? 1.0 : 0.6);
+    }
+  }
+  return totalOffset;
+}
+
+vec4 sampleRaindrops(vec3 d, vec3 up, vec3 L, float h0, float transitFactor) {
+  if (uWeather < 1.5 || h0 > CT + 380.0) return vec4(0.0);
+
+  float camPadDist = length(uCamFromPad);
+  if (camPadDist > 120000.0) return vec4(0.0);
+
+  // Under clouds (0..CB): Rain is gentle, Storm is heavy. Inside clouds (CB..CT): both intensify.
+  float inCloud = smoothstep(CB - 250.0, 2350.0, h0) * (1.0 - smoothstep(2850.0, CT + 350.0, h0));
+  float aboveCloudFade = 1.0 - smoothstep(CT - 120.0, CT + 360.0, h0);
+  float isStorm = step(2.5, uWeather);
+  float baseDensity = mix(0.45, 1.25, isStorm);
+  float rainStrength = aboveCloudFade * baseDensity * (1.0 + inCloud * mix(0.85, 1.35, isStorm));
+  if (rainStrength <= 0.01) return vec4(0.0);
+
+  vec3 east = uPadEast - up * dot(up, uPadEast);
+  float eLen = length(east);
+  east = eLen > 1e-3 ? east / eLen : normalize(cross(vec3(0.0, 0.0, 1.0), up));
+  vec3 north = cross(up, east);
+
+  float windTilt = mix(0.06, 0.22, isStorm);
+  vec3 rainUp = normalize(up + east * windTilt);
+  float elev = dot(d, rainUp);
+  vec3 horiz = d - rainUp * elev;
+  float horizLen = max(length(horiz), 0.12);
+  vec3 hUnit = horiz / horizLen;
+  float az = atan(dot(hUnit, north), dot(hUnit, east));
+  float vProj = elev / max(horizLen, 0.24);
+  float pitchFade = smoothstep(0.06, 0.36, horizLen);
+
+  float accumAlpha = 0.0;
+  for (int layer = 0; layer < 4; ++layer) {
+    float layerWeight = layer == 3 ? inCloud * mix(0.75, 1.25, isStorm) : 1.0 / (1.0 + float(layer) * 0.45);
+    if (layerWeight <= 0.01) continue;
+
+    // Fine, hair-thin rain streaks instead of thick bars
+    float cols = (220.0 + float(layer) * 140.0) * (1.0 + inCloud * 0.2);
+    float uCoord = (az / (2.0 * PI) + 0.5) * cols + float(layer) * 11.7;
+    float colId = floor(uCoord);
+    float colHash = rainHash12(vec2(colId, float(layer) * 19.3 + 1.7));
+
+    float dx = abs(fract(uCoord) - 0.5 - (colHash - 0.5) * 0.38);
+    float fallSpeed = (16.0 + float(layer) * 5.0) * mix(0.95, 1.3, isStorm);
+    float vScale = 2.8 + float(layer) * 1.4;
+    float vCoord = vProj * vScale + uRealTime * fallSpeed + colHash * 29.4;
+    float rowId = floor(vCoord);
+    float rowHash = rainHash12(vec2(colId * 3.7 + float(layer) * 7.1, rowId));
+
+    float spawnProb = clamp(0.22 * rainStrength, 0.0, 0.65);
+    if (rowHash < spawnProb) {
+      float dy = fract(vCoord);
+      float width = layer == 3 ? 0.05 : 0.034;
+      float streak =
+        smoothstep(width, width * 0.12, dx) *
+        smoothstep(0.02, 0.18, dy) *
+        smoothstep(0.90, 0.18, dy);
+      accumAlpha += streak * layerWeight * pitchFade;
+    }
+  }
+
+  accumAlpha = clamp(accumAlpha * mix(0.17, 0.27, isStorm), 0.0, 0.45);
+  // Rain curtain: far away the streaks merge into grey veils hanging under the clouds.
+  float veil = fbm(vec3(az * 7.0, uRealTime * 0.15, 3.0), 3);
+  float curtain = rainStrength * mix(0.16, 0.3, isStorm) * (1.0 - smoothstep(0.0, 0.32, abs(elev))) * smoothstep(0.35, 0.7, veil);
+  accumAlpha = max(accumAlpha, curtain);
+  // Only from the horizon up: the rain between the camera and the ground is drawn by the
+  // screen-space RainLens effect. Drawing it here too painted long bright lines and pale
+  // bands over the ground and the sea.
+  accumAlpha *= smoothstep(-0.05, 0.03, dot(d, up));
+  if (accumAlpha <= 0.002) return vec4(0.0);
+
+  float muS = dot(up, L);
+  float dayLight = 0.08 + 0.92 * smoothstep(-0.12, 0.25, muS) * transitFactor;
+  float flashBoost = 0.0;
+  if (uWeather > 2.5) {
+    float intTick = floor(uRealTime * 3.8);
+    if (hash11(intTick * 0.73 + 1.19) < 0.65) {
+      flashBoost = sin(fract(uRealTime * 3.8) * 3.14159) * 0.38;
+    }
+  }
+  vec3 rainAlbedo = vec3(0.68, 0.78, 0.90) * (dayLight * 0.42 + flashBoost + 0.06);
+  return vec4(rainAlbedo, accumAlpha);
+}
 `;
 
 export const planetFragment = /* glsl */ `
@@ -751,8 +902,9 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
     float _CausticsBrightness = 1.5;
     float _CausticsPower = 1.0;
 
-    // World position on the ocean surface (smooth large swells readable from pad)
-    vec2 worldXZ = local * 0.42;
+    // World position on the ocean surface (smooth large swells readable from pad or splashdown site)
+    vec2 waveXZ = length(local) < 25000.0 ? local : mod(vec2(dot(d * dist, east), dot(d * dist, north)), 8192.0);
+    vec2 worldXZ = waveXZ * 0.42;
     float time = uRealTime;
 
     // 1. Calculate Water Normals
@@ -782,6 +934,14 @@ vec3 shadeWater(vec3 n, vec3 d, vec3 L, vec3 sunT, float shadow, float dist, vec
       max(1.0 - pow(abs(xDelta + yDelta), 2.0), 0.22),
       -yDelta
     ));
+
+    // Raindrop surface ripples on water during Rain or Storm
+    if (uWeather > 1.5 && dist < 240.0) {
+      float rInt = uWeather > 2.5 ? 1.35 : 0.9;
+      float rFade = 1.0 - smoothstep(45.0, 240.0, dist);
+      vec3 rNorm = rainRipples(waveXZ * 0.35, time, rInt);
+      normal = normalize(normal + vec3(rNorm.x, 0.0, rNorm.z) * 1.45 * rFade);
+    }
 
     // 2. Depth Calculation & Seabed Caustics near the beach
     // Gentle continental shelf slope so the turquoise-green shallow shore area extends much wider (~450m)
@@ -931,6 +1091,9 @@ void main() {
   vec3 up = normalize(uCamUp);
   vec3 L = normalize(uSunDir);
   float h0 = max(uCamAlt, 0.5);
+
+  // Drops on the lens are drawn by the screen-space RainLens effect (scenes/RainLens.tsx).
+
   float mu = dot(d, up);
   float nu = dot(d, L);
 
@@ -1018,17 +1181,20 @@ void main() {
     float heightFar;
     vec3 albedo = globalAlbedo(nf, waterFar, heightFar);
     vec3 photo = albedo;
-    // Close-up water (metre-scale waves) only when the camera is low; from orbit it would
-    // alias into grain, so the photo's ocean takes over as you climb.
-    float wNear = (1.0 - smoothstep(35000.0, 140000.0, padDist)) * (1.0 - smoothstep(3000.0, 30000.0, h0));
+    // Close-up water (metre-scale waves) whenever the camera is low over the ocean (both at the pad
+    // and at the splashdown recovery site); from orbit it fades smoothly to the Blue Marble ocean.
+    float wNear = (1.0 - smoothstep(35000.0, 140000.0, t)) * (1.0 - smoothstep(3000.0, 30000.0, h0));
     float wSite = 1.0 - smoothstep(3000.0, 10000.0, padDist);
     float water = waterFar;
     float coastDist = 1e5;
-    if (wNear > 0.0) {
+    if (wSite > 0.0) {
       float waterNear;
       vec3 albedoNear = nearAlbedo(local, t, waterNear, coastDist);
       albedo = mix(albedo, albedoNear, wSite);
       water = mix(waterFar, waterNear, wSite);
+    } else if (h0 < 1200.0) {
+      // Ensure splashdown recovery away from the launch site always renders over open ocean waves
+      water = max(waterFar, 1.0 - smoothstep(180.0, 1100.0, h0));
     }
     float ndl = dot(n, L);
     vec3 sunT = extinction(sunDepth(0.0, ndl)) * transitFactor;
@@ -1137,13 +1303,16 @@ void main() {
   }
   #endif
 
+  vec4 rain = sampleRaindrops(d, up, L, h0, transitFactor);
+  col = mix(col, rain.rgb, rain.a);
+
   gl_FragColor = vec4(col, 1.0);
   ${fragmentDepth}
 }
 `;
 
 // Lightweight overlay pass rendered after 3D pad/rocket meshes when camera is above
-// the cloud base (using GreaterDepth so it only shades pixels occupied by 3D meshes).
+// the cloud base or inside rain/storm precipitation (using GreaterDepth so it only shades pixels occupied by 3D meshes).
 export const cloudOverlayFragment = /* glsl */ `
 ${planetHeaderAndClouds}
 
@@ -1157,9 +1326,10 @@ void main() {
 
   vec2 ground = raySphereH(h0, mu, 0.0);
   bool hitGround = ground.x < ground.y && ground.x > 0.0;
-  if (!hitGround || h0 <= CB) discard;
+  bool hasRainOverlay = uWeather > 1.5 && h0 < CT + 380.0;
+  if ((!hitGround && !hasRainOverlay) || (h0 <= CB && !hasRainOverlay)) discard;
 
-  float tSurface = ground.x;
+  float tSurface = hitGround ? ground.x : 50000.0;
   float moonDist = max(length(uMoonRel), 1.0);
   vec3 moonDir = uMoonRel / moonDist;
   float moonAng = RM / moonDist;
@@ -1168,20 +1338,26 @@ void main() {
   float transitProgress = smoothstep(abs(moonAng - sunAng) * 0.75, moonAng + sunAng, sunMoonSep);
   float transitFactor = mix(0.025, 1.0, pow(transitProgress, 1.35));
 
-  vec4 cirrus = sampleCirrus(up, h0, mu, d, L, tSurface, transitFactor);
-  vec2 seg = cloudSegment(h0, mu, tSurface);
+  vec4 cirrus = vec4(0.0, 0.0, 0.0, 1.0);
   vec4 cumulus = vec4(0.0, 0.0, 0.0, 1.0);
-  float closestCloudT = 1e10;
-  if (seg.x >= 0.0) {
-    cumulus = marchClouds(up, h0, mu, d, L, seg, transitFactor, closestCloudT);
+  if (hitGround && h0 > CB) {
+    cirrus = sampleCirrus(up, h0, mu, d, L, tSurface, transitFactor);
+    vec2 seg = cloudSegment(h0, mu, tSurface);
+    float closestCloudT = 1e10;
+    if (seg.x >= 0.0) {
+      cumulus = marchClouds(up, h0, mu, d, L, seg, transitFactor, closestCloudT);
+    }
   }
 
-  float T = cirrus.a * cumulus.a;
-  if (T > 0.995) discard;
+  vec4 rain = sampleRaindrops(d, up, L, h0, transitFactor);
+
+  float T = cirrus.a * cumulus.a * (1.0 - rain.a);
   vec3 rgb = h0 < CIRRUS_H
     ? cirrus.rgb * cumulus.a + cumulus.rgb
     : cumulus.rgb * cirrus.a + cirrus.rgb;
-  gl_FragColor = vec4(rgb, 1.0 - T);
+  rgb = mix(rgb, rain.rgb, rain.a * 0.75);
+  if (T > 0.995 && dot(rgb, rgb) < 1e-6) discard;
+  gl_FragColor = vec4(rgb, clamp(1.0 - T, 0.0, 1.0));
   #else
   discard;
   #endif

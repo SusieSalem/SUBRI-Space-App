@@ -1,13 +1,18 @@
 // Placeholder crew spacecraft built from primitives: capsule, service module,
 // engine, solar wings and an optional radiation shield ring. It changes with the
-// parts picked in the design panel. Will be replaced by Blender models later.
+// parts picked in the design panel. Uses the Blender models in public/models/;
+// the primitives are only shown while those load.
 
-import { useMemo, useRef } from "react";
+import { Suspense, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import ShaderMat from "./ShaderMat";
 import type { PartId } from "../core/design";
 import { billboardVertex, plumeFragment } from "./shaders/space";
+import { Model } from "./models";
+
+// The Blender models are +Y up; this turns +Y into the spacecraft's +Z nose axis.
+const Y_TO_Z: [number, number, number] = [Math.PI / 2, 0, 0];
 
 interface Props {
   parts: PartId[];
@@ -27,7 +32,6 @@ const silver = new THREE.MeshStandardMaterial({ color: "#a9aeb5", metalness: 0.8
 const dark = new THREE.MeshStandardMaterial({ color: "#2a2724", metalness: 0.3, roughness: 0.7 });
 const panel = new THREE.MeshStandardMaterial({ color: "#14244a", metalness: 0.6, roughness: 0.25, emissive: "#050a18" });
 const shield = new THREE.MeshStandardMaterial({ color: "#7a6a52", metalness: 0.4, roughness: 0.6 });
-const windowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 1.1, 0.6) });
 
 export default function Spacecraft({ parts, burning, heat, scale = SPACECRAFT_SCALE, folded = false }: Props) {
   const hasCapsule = parts.includes("capsule");
@@ -70,38 +74,44 @@ export default function Spacecraft({ parts, burning, heat, scale = SPACECRAFT_SC
   return (
     <group scale={scale}>
       {hasCapsule && (
-        <group>
-          <mesh geometry={capsuleGeo} material={silver} />
-          {/* heat shield */}
-          <mesh position={[0, 0, -0.05]} rotation={[Math.PI / 2, 0, 0]} material={dark}>
-            <cylinderGeometry args={[2.55, 2.55, 0.12, 48]} />
-          </mesh>
-          {/* lit window: the crew is inside */}
-          <mesh position={[0, 1.78, 1.7]} rotation={[-1.06, 0, 0]} material={windowMat}>
-            <planeGeometry args={[0.6, 0.4]} />
-          </mesh>
-          {/* docking tunnel */}
-          <mesh position={[0, 0, 3.55]} rotation={[Math.PI / 2, 0, 0]} material={white}>
-            <cylinderGeometry args={[0.55, 0.65, 0.5, 24]} />
-          </mesh>
-        </group>
+        <Suspense
+          fallback={
+            <>
+              <mesh geometry={capsuleGeo} material={silver} />
+              <mesh position={[0, 0, -0.05]} rotation={[Math.PI / 2, 0, 0]} material={dark}>
+                <cylinderGeometry args={[2.55, 2.55, 0.12, 48]} />
+              </mesh>
+            </>
+          }
+        >
+          <Model name="capsule" rotation={Y_TO_Z} />
+        </Suspense>
       )}
 
       {hasShield && (
-        <mesh position={[0, 0, 0.9]} rotation={[Math.PI / 2, 0, 0]} material={shield}>
-          <torusGeometry args={[2.05, 0.18, 12, 48]} />
-        </mesh>
+        <Suspense
+          fallback={
+            <mesh position={[0, 0, 0.9]} material={shield}>
+              <torusGeometry args={[2.05, 0.18, 12, 48]} />
+            </mesh>
+          }
+        >
+          <Model name="radiation_shield" position={[0, 0, 0.9]} rotation={Y_TO_Z} />
+        </Suspense>
       )}
 
       {service && (
         <group>
-          <mesh position={[0, 0, serviceZ]} rotation={[Math.PI / 2, 0, 0]} material={white}>
-            <cylinderGeometry args={[2.3, 2.3, serviceLength, 40]} />
-          </mesh>
-          {/* engine bell */}
-          <mesh position={[0, 0, engineZ - 0.7]} rotation={[Math.PI / 2, 0, 0]} material={dark}>
-            <cylinderGeometry args={[0.35, 0.9, 1.4, 24, 1, true]} />
-          </mesh>
+          <Suspense
+            fallback={
+              <mesh position={[0, 0, serviceZ]} rotation={[Math.PI / 2, 0, 0]} material={white}>
+                <cylinderGeometry args={[2.3, 2.3, serviceLength, 40]} />
+              </mesh>
+            }
+          >
+            {/* model origin = top of the service module, engine bell included */}
+            <Model name={service === "large" ? "service_large" : "service_small"} position={[0, 0, -0.3]} rotation={Y_TO_Z} />
+          </Suspense>
           {/* plume, apex at the nozzle and widening behind */}
           <mesh ref={plumeRef} position={[0, 0, engineZ - 1.4 - 4]} rotation={[Math.PI / 2, 0, 0]}>
             <coneGeometry args={[2.2, 8, 24, 1, true]} />
@@ -118,18 +128,21 @@ export default function Spacecraft({ parts, burning, heat, scale = SPACECRAFT_SC
           {hasSolar &&
             [0, 1, 2, 3].map((i) => (
               <group key={i} position={[0, 0, serviceZ]} rotation={[0, 0, Math.PI / 4 + (i * Math.PI) / 2]}>
-                {folded ? (
-                  <mesh position={[2.42, 0, -serviceLength / 2 + 0.3]} rotation={[0, Math.PI / 2, 0]} material={panel}>
-                    <boxGeometry args={[serviceLength * 0.9, 0.06, 1.2]} />
-                  </mesh>
-                ) : (
-                  <mesh position={[2.3 + 3.6, 0, 0]} material={panel}>
-                    <boxGeometry args={[7, 0.06, 1.9]} />
-                  </mesh>
-                )}
-                <mesh position={[2.35, 0, 0]} material={silver}>
-                  <boxGeometry args={[0.3, 0.12, 0.3]} />
-                </mesh>
+                <Suspense
+                  fallback={
+                    <mesh position={folded ? [2.42, 0, 0] : [5.9, 0, 0]} material={panel}>
+                      <boxGeometry args={folded ? [0.1, 0.06, serviceLength * 0.9] : [7, 0.06, 1.9]} />
+                    </mesh>
+                  }
+                >
+                  {folded ? (
+                    // folded stack lies flat on the hull, stretched to the module's length
+                    <Model name="solar_wing_folded" position={[2.33, 0, 0]} rotation={Y_TO_Z} scale={[1, (serviceLength * 0.9) / 2.7, 1]} />
+                  ) : (
+                    // origin at the hinge, wing runs out along +X
+                    <Model name="solar_wing_deployed" position={[2.3, 0, 0]} rotation={Y_TO_Z} />
+                  )}
+                </Suspense>
               </group>
             ))}
         </group>

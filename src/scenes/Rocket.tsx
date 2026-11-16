@@ -3,13 +3,16 @@
 // adapter, the crew spacecraft and its launch escape tower.
 // Each detachable piece is its own group so the ascent can drop it off.
 // Generic look on purpose: no real rocket's livery or logos.
+// Geometry comes from the Blender models in public/models/ (rocket_*.glb,
+// escape_tower.glb); the primitives below are only shown while they load.
 
-import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
+import { Suspense, forwardRef, useImperativeHandle, useMemo, useRef } from "react";
 import * as THREE from "three";
 import ShaderMat from "./ShaderMat";
 import type { PartId } from "../core/design";
 import type { RocketId } from "../core/launchCheck";
 import Spacecraft from "./Spacecraft";
+import { Model, type ModelName } from "./models";
 import { billboardVertex, plumeFragment } from "./shaders/space";
 
 export type PieceId = "boosters" | "stage1" | "stage2" | "escapeTower" | "spacecraft";
@@ -71,7 +74,6 @@ export function stackDims(rocket: RocketId, parts: PartId[]): StackDims {
 
 const body = new THREE.MeshStandardMaterial({ color: "#e9ebee", roughness: 0.5, metalness: 0.05 });
 const darkBand = new THREE.MeshStandardMaterial({ color: "#23262b", roughness: 0.6, metalness: 0.2 });
-const accent = new THREE.MeshStandardMaterial({ color: "#2b6cb0", roughness: 0.5, metalness: 0.1 });
 const engineMat = new THREE.MeshStandardMaterial({ color: "#3a3633", roughness: 0.45, metalness: 0.8 });
 const towerMat = new THREE.MeshStandardMaterial({ color: "#f2f2f2", roughness: 0.4, metalness: 0.1 });
 
@@ -189,55 +191,92 @@ const Rocket = forwardRef<RocketHandle, Props>(function Rocket(
           [-r * 0.45, -r * 0.45],
         ];
 
+  const model: ModelName = `rocket_${rocket}`;
+
+  // Primitive shapes, shown only while the Blender model loads.
+  const boosterPlaceholder = spec.boosters && (
+    <>
+      {[1, -1].map((side) => {
+        const b = spec.boosters!;
+        return (
+          <group key={side} position={[0, 0, side * (r + b.radius + 0.15)]}>
+            <mesh position={[0, b.height / 2, 0]} material={body}>
+              <cylinderGeometry args={[b.radius, b.radius, b.height, 28]} />
+            </mesh>
+            <mesh position={[0, b.height + b.radius * 1.2, 0]} material={body}>
+              <coneGeometry args={[b.radius, b.radius * 2.4, 28]} />
+            </mesh>
+            <Engine radius={b.radius * 0.6} />
+          </group>
+        );
+      })}
+    </>
+  );
+  const stage1Placeholder = (
+    <>
+      <mesh position={[0, spec.stage1Height / 2, 0]} material={body}>
+        <cylinderGeometry args={[r, r, spec.stage1Height, 40]} />
+      </mesh>
+      <mesh position={[0, spec.stage1Height + spec.interstage / 2, 0]} material={darkBand}>
+        <cylinderGeometry args={[r, r, spec.interstage, 40]} />
+      </mesh>
+      {enginePositions.map(([x, z], i) => (
+        <group key={i} position={[x, 0, z]}>
+          <Engine radius={engineR} />
+        </group>
+      ))}
+    </>
+  );
+  const stage2Placeholder = (
+    <>
+      <mesh position={[0, dims.stage2Base + spec.stage2Height / 2, 0]} material={body}>
+        <cylinderGeometry args={[r, r, spec.stage2Height, 40]} />
+      </mesh>
+      <mesh position={[0, dims.stage2Base + spec.stage2Height + ADAPTER_HEIGHT / 2, 0]} material={body}>
+        <cylinderGeometry args={[2.35, r, ADAPTER_HEIGHT, 40]} />
+      </mesh>
+      <group position={[0, dims.stage2Base, 0]}>
+        <Engine radius={r * 0.5} />
+      </group>
+    </>
+  );
+  const towerPlaceholder = (
+    <>
+      <mesh position={[0, 1.75, 0]} material={towerMat}>
+        <cylinderGeometry args={[1.12, 2.62, 3.5, 40]} />
+      </mesh>
+      <mesh position={[0, 6.2, 0]} material={darkBand}>
+        <cylinderGeometry args={[0.32, 0.4, 4, 16]} />
+      </mesh>
+    </>
+  );
+
   return (
     <>
       {/* Boosters, on the +Z/-Z sides so they clear the service tower on -X */}
       <group ref={boosters}>
-        {spec.boosters &&
-          Array.from({ length: spec.boosters.count }).map((_, i) => {
-            const b = spec.boosters!;
-            const z = (i === 0 ? 1 : -1) * (r + b.radius + 0.15);
-            return (
-              <group key={i} position={[0, 0, z]}>
-                <mesh position={[0, b.height / 2, 0]} material={body}>
-                  <cylinderGeometry args={[b.radius, b.radius, b.height, 28]} />
-                </mesh>
-                <mesh position={[0, b.height + b.radius * 1.2, 0]} material={body}>
-                  <coneGeometry args={[b.radius, b.radius * 2.4, 28]} />
-                </mesh>
-                <mesh position={[0, b.height * 0.25, 0]} material={darkBand}>
-                  <cylinderGeometry args={[b.radius * 1.01, b.radius * 1.01, 0.8, 28]} />
-                </mesh>
-                <group position={[0, 0, 0]}>
-                  <Engine radius={b.radius * 0.6} />
-                  <group position={[0, -b.radius * 0.84, 0]} ref={addPlumeGroup}>
-                    <Plume uniforms={plumes.boosters} radius={b.radius * 1.3} length={b.height * 0.55} />
-                  </group>
+        {spec.boosters && (
+          <>
+            <Suspense fallback={boosterPlaceholder}>
+              <Model name={model} node="boosters" />
+            </Suspense>
+            {[1, -1].map((side) => {
+              const b = spec.boosters!;
+              return (
+                <group key={side} position={[0, -b.radius * 0.84, side * (r + b.radius + 0.15)]} ref={addPlumeGroup}>
+                  <Plume uniforms={plumes.boosters} radius={b.radius * 1.3} length={b.height * 0.55} />
                 </group>
-              </group>
-            );
-          })}
+              );
+            })}
+          </>
+        )}
       </group>
 
-      {/* First stage */}
+      {/* First stage (tank, interstage, engines) */}
       <group ref={stage1}>
-        <mesh position={[0, spec.stage1Height / 2, 0]} material={body}>
-          <cylinderGeometry args={[r, r, spec.stage1Height, 40]} />
-        </mesh>
-        <mesh position={[0, spec.stage1Height * 0.12, 0]} material={darkBand}>
-          <cylinderGeometry args={[r * 1.005, r * 1.005, 1.2, 40]} />
-        </mesh>
-        <mesh position={[0, spec.stage1Height * 0.62, 0]} material={accent}>
-          <cylinderGeometry args={[r * 1.005, r * 1.005, 0.6, 40]} />
-        </mesh>
-        <mesh position={[0, spec.stage1Height + spec.interstage / 2, 0]} material={darkBand}>
-          <cylinderGeometry args={[r, r, spec.interstage, 40]} />
-        </mesh>
-        {enginePositions.map(([x, z], i) => (
-          <group key={i} position={[x, 0, z]}>
-            <Engine radius={engineR} />
-          </group>
-        ))}
+        <Suspense fallback={stage1Placeholder}>
+          <Model name={model} node="stage1" />
+        </Suspense>
         <group position={[0, -engineDrop, 0]} ref={addPlumeGroup}>
           <Plume uniforms={plumes.stage1} radius={r * 1.15} length={spec.stage1Height * 0.5} />
         </group>
@@ -245,20 +284,11 @@ const Rocket = forwardRef<RocketHandle, Props>(function Rocket(
 
       {/* Second stage and adapter */}
       <group ref={stage2}>
-        <mesh position={[0, dims.stage2Base + spec.stage2Height / 2, 0]} material={body}>
-          <cylinderGeometry args={[r, r, spec.stage2Height, 40]} />
-        </mesh>
-        <mesh position={[0, dims.stage2Base + spec.stage2Height * 0.8, 0]} material={accent}>
-          <cylinderGeometry args={[r * 1.005, r * 1.005, 0.4, 40]} />
-        </mesh>
-        <mesh position={[0, dims.stage2Base + spec.stage2Height + ADAPTER_HEIGHT / 2, 0]} material={body}>
-          <cylinderGeometry args={[2.35, r, ADAPTER_HEIGHT, 40]} />
-        </mesh>
-        <group position={[0, dims.stage2Base, 0]}>
-          <Engine radius={r * 0.5} />
-          <group position={[0, -r * 0.7, 0]} ref={addPlumeGroup}>
-            <Plume uniforms={plumes.stage2} radius={r * 1.4} length={spec.stage2Height * 0.9} />
-          </group>
+        <Suspense fallback={stage2Placeholder}>
+          <Model name={model} node="stage2" />
+        </Suspense>
+        <group position={[0, dims.stage2Base - r * 0.7, 0]} ref={addPlumeGroup}>
+          <Plume uniforms={plumes.stage2} radius={r * 1.4} length={spec.stage2Height * 0.9} />
         </group>
       </group>
 
@@ -279,18 +309,9 @@ const Rocket = forwardRef<RocketHandle, Props>(function Rocket(
       <group ref={escapeTower}>
         {dims.hasCapsule && (
           <group position={[0, dims.capsuleBase, 0]}>
-            <mesh position={[0, 1.75, 0]} material={towerMat}>
-              <cylinderGeometry args={[1.12, 2.62, 3.5, 40]} />
-            </mesh>
-            <mesh position={[0, 3.85, 0]} material={towerMat}>
-              <cylinderGeometry args={[0.55, 1.12, 0.7, 24]} />
-            </mesh>
-            <mesh position={[0, 6.2, 0]} material={darkBand}>
-              <cylinderGeometry args={[0.32, 0.4, 4, 16]} />
-            </mesh>
-            <mesh position={[0, 8.6, 0]} material={towerMat}>
-              <coneGeometry args={[0.32, 1.2, 16]} />
-            </mesh>
+            <Suspense fallback={towerPlaceholder}>
+              <Model name="escape_tower" />
+            </Suspense>
           </group>
         )}
       </group>

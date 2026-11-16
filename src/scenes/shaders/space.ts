@@ -145,6 +145,8 @@ void main() {
   float core = pow(along, 2.5);
   vec3 col = mix(vec3(1.0, 0.45, 0.15), vec3(0.7, 0.85, 1.0), core) * (core * 6.0 + along * 1.5) * flicker;
   float a = along * clamp(uThrottle, 0.0, 1.0);
+  // Throttle values above 1 mean "extra bright" (ignition and low altitude): more glow for the bloom.
+  col *= max(uThrottle, 1.0);
   gl_FragColor = vec4(max(col * a, 0.0), a);
   ${fragmentDepth}
 }

@@ -48,7 +48,7 @@ void main() {
   float a = pow(1.0 - r2, 1.5) * (1.0 - smoothstep(0.55, 1.0, vAge)) * smoothstep(0.0, 0.05, vAge);
   vec3 col = vec3(0.86, 0.85, 0.83) * lit * uLight;
   // Fresh exhaust glows orange near the flame.
-  col += vec3(2.4, 1.0, 0.3) * (1.0 - smoothstep(0.0, 0.06, vAge)) * 2.0;
+  col += vec3(2.4, 1.0, 0.3) * (1.0 - smoothstep(0.0, 0.1, vAge)) * 3.5;
   gl_FragColor = vec4(col, a * (0.55 + 0.2 * vSeed));
 }
 `;

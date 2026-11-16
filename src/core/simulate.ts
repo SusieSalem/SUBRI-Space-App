@@ -475,6 +475,12 @@ export class FlightSim {
 
     // Ground contact.
     if (this.altitude <= 0) {
+      // A physics step usually ends a few metres below the surface. Put the vehicle back
+      // exactly on the ground and at rest with it, so it stays put and its base meets the
+      // terrain from every camera angle (the planet is drawn as a background without depth).
+      const radial = vnorm(this.r);
+      this.r = vscale(radial, R_EARTH + 0.2);
+      this.v = airVelocity(this.r);
       if (this.phase === "parachutes" && sp < 20) {
         this.phase = "splashdown";
         this.v = airVelocity(this.r);
