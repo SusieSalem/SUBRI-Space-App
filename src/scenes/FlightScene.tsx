@@ -639,6 +639,9 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
           );
           g.quaternion.copy(qBody).multiply(tilt);
         } else {
+          // Visible again: a piece hidden as debris (or sunk in a crash) in the last flight
+          // is back on the stack once a new flight starts.
+          g.visible = true;
           g.position.set(0, 0, 0);
           g.quaternion.copy(qBody);
         }
