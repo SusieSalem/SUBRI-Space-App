@@ -557,7 +557,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
 
       if (sim.phase === "failed" && !crashTriggered.current) {
         crashTriggered.current = true;
-        playPartSnap(false);
+        playStageSeparation();
         const pivotByPiece: Record<PieceId, number> = {
           boosters: dims.stage2Base * 0.4,
           stage1: dims.stage2Base * 0.5,

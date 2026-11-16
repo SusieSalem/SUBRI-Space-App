@@ -67,9 +67,9 @@ const EARTH_STEPS: TutorialStep[] = [
   },
   {
     id: "environment",
-    title: "Weather, Date & Time",
-    text: "Set launch date, time of day, and weather (Clear, Cloudy, Rain, or Storm). They change sky lighting, cloud cover, and storm lightning around the pad.",
-    targetSelector: ".env-controls",
+    title: "Weather, Time & Settings",
+    text: "Open the gear menu to set launch weather (Clear, Cloudy, Rain, or Storm), date, time of day, audio, and graphics quality.",
+    targetSelector: ".controls .popover-anchor",
     placement: "top",
   },
   {
