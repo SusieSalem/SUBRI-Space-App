@@ -36,14 +36,17 @@ import {
 import { artemisPath } from "../core/artemis2";
 import { autoWarp, type WarpMode } from "../core/warp";
 import { COUNTDOWN_S, FlightSim, MOUNT_HEIGHT, PAD_ECEF, PHASE_LABEL, type PieceId as SimPieceId } from "../core/simulate";
+import { getScannedLunarTargets } from "../core/lunarTargets";
 import {
   playAlert,
   playCountdownBeep,
   playMissionResult,
   playParachuteDeploy,
-  playPartSnap,
   playSpaceTelemetryCue,
+  playStageSeparation,
+  playTargetDetected,
   playThunderStrike,
+  speakCallout,
   stopFlightAudio,
   updateFlightAudio,
 } from "../audio/soundManager";
@@ -369,44 +372,78 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     }
     const t = sim.t;
 
-    // Discrete flight sounds: countdown pips, space phase telemetry cues, chutes, and mission outcome.
+    // Discrete flight sounds: countdown pips, voice callouts, space telemetry cues, chutes, and mission outcome.
     if (flying) {
+      if (t >= 0.05 && t < 1.5 && !sounds.current.has("voice_t10")) {
+        sounds.current.add("voice_t10");
+        speakCallout("T minus 10 seconds");
+      }
+      if (t >= COUNTDOWN_S - 3 && !sounds.current.has("voice_mes")) {
+        sounds.current.add("voice_mes");
+        speakCallout("Main engine start");
+      }
       for (let s = 5; s >= 0; s--) {
         const key = `beep${s}`;
         if (t >= COUNTDOWN_S - s && !sounds.current.has(key)) {
           sounds.current.add(key);
           playCountdownBeep(s === 0);
+          if (s === 0) {
+            speakCallout("Liftoff!");
+          }
         }
       }
       if (sim.phase !== lastPhaseSound.current) {
         const prev = lastPhaseSound.current;
         lastPhaseSound.current = sim.phase;
-        if (sim.phase === "parking" || sim.phase === "transit") {
+        if (sim.phase === "parking") {
           playSpaceTelemetryCue("coast");
-        } else if (sim.phase === "tli" || sim.phase === "tcm") {
+          speakCallout("Parking orbit insertion complete");
+        } else if (sim.phase === "transit") {
+          playSpaceTelemetryCue("coast");
+        } else if (sim.phase === "tli") {
           playSpaceTelemetryCue("burn_start");
+          speakCallout("Trans-lunar injection burn");
+        } else if (sim.phase === "tcm") {
+          playSpaceTelemetryCue("burn_start");
+          if (warpNow <= 50) speakCallout("Course correction burn");
         } else if (sim.phase === "return" && prev !== "return") {
           playSpaceTelemetryCue("lunar_flyby");
+          speakCallout("Lunar flyby complete, heading home");
         } else if (sim.phase === "entry") {
           playSpaceTelemetryCue("entry");
+          speakCallout("Entry interface");
         } else if (sim.phase === "parachutes") {
           playParachuteDeploy();
+          speakCallout("Parachutes deployed");
         }
       }
       if (sim.moonDistance < 65000000 && !sounds.current.has("lunarEncounter")) {
         sounds.current.add("lunarEncounter");
         playSpaceTelemetryCue("lunar_flyby");
+        speakCallout("Entering lunar polar survey zone");
+      }
+      // Ping as each lunar polar ice crater is scanned during lunar flyby
+      const scannedTargets = getScannedLunarTargets(sim.closestMoon, sim.moonDistance);
+      if (scannedTargets.length > 0) {
+        const latest = scannedTargets[scannedTargets.length - 1];
+        const scanKey = `scan_${latest.id}`;
+        if (!sounds.current.has(scanKey)) {
+          sounds.current.add(scanKey);
+          playTargetDetected();
+        }
       }
       if (sim.phase === "splashdown" && !sounds.current.has("missionDone")) {
         sounds.current.add("missionDone");
         stopFlightAudio();
         playMissionResult(true, 3);
+        speakCallout("Splashdown! Crew home safe.");
       }
       if (sim.phase === "failed" && !sounds.current.has("missionFailed")) {
         sounds.current.add("missionFailed");
         stopFlightAudio();
         playAlert("failure");
         playMissionResult(false, 1);
+        speakCallout("Mission lost.");
       }
     }
 
@@ -420,7 +457,13 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     while (eventIndex.current < sim.events.length) {
       const e = sim.events[eventIndex.current++];
       if (e.type !== "separation" || !e.piece) continue;
-      playPartSnap(false);
+      playStageSeparation(e.piece);
+      if (warpNow <= 10) {
+        if (e.piece === "boosters") speakCallout("Booster separation");
+        else if (e.piece === "stage1") speakCallout("Stage separation");
+        else if (e.piece === "escapeTower") speakCallout("Escape tower jettisoned");
+        else if (e.piece === "serviceModule") speakCallout("Service module separated");
+      }
       const piece = mapPiece(e.piece);
       const v = { ...e.v };
       if (e.piece === "escapeTower") {
@@ -708,7 +751,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       weather,
     });
 
-    // Synchronized thunder strikes matching the 3 procedural lightning bolt slots in planet.ts
+    // Synchronized spatial thunder strikes matching the 3 procedural lightning bolt slots in planet.ts
     if (weather === "storm" && camAltM < 35000) {
       const atten = Math.max(0.25, 1 - Math.max(0, camAltM) / 35000);
       for (let i = 0; i < 3; i++) {
@@ -725,7 +768,12 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
               const oldest = thunderStrikes.current.values().next().value;
               if (oldest !== undefined) thunderStrikes.current.delete(oldest);
             }
-            playThunderStrike(0.85 * atten);
+            const seed = tSeries * 1.17 + i * 7.3;
+            const ang = shaderHash11(seed + 0.43) * Math.PI * 2;
+            const distFrac = shaderHash11(seed + 0.31); // 0..1 (1.5 km to 4.8 km)
+            const pan = Math.sin(ang) * 0.72;
+            const delaySec = 0.08 + distFrac * 0.32;
+            playThunderStrike((0.92 - distFrac * 0.25) * atten, pan, delaySec);
           }
         }
       }

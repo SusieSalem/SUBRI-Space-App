@@ -22,15 +22,19 @@ import {
   type StormResult,
 } from "./core/spaceWeather";
 import {
-  isMuted,
+  getAudioSettings,
   playAlert,
   playClick,
   playPartSnap,
   playRocketCheck,
   playThunderStrike,
-  subscribeMute,
+  setVolume,
+  subscribeAudioSettings,
+  toggleMusic,
   toggleMute,
+  toggleVoice,
 } from "./audio/soundManager";
+import { LUNAR_ICE_TARGETS, getScannedLunarTargets } from "./core/lunarTargets";
 import { TutorialOverlay } from "./components/TutorialOverlay";
 import { ControlsHelp } from "./components/ControlsHelp";
 import { SettingsMenu } from "./components/SettingsMenu";
@@ -559,6 +563,7 @@ export default function App() {
               </div>
             )}
             <ArtemisComparison tel={tel} />
+            <LunarIceSurvey tel={tel} />
             <span className={`small ${tel.autopilot ? "ok" : "warn"}`}>
               {tel.autopilot ? "Autopilot flying (press T or WASD to take over)" : "Manual control (press T for autopilot)"}
             </span>
@@ -803,15 +808,54 @@ function EnvironmentControls({
   );
 }
 
-function AudioToggle() {
-  const [muted, setMutedState] = useState(() => isMuted());
-  useEffect(() => subscribeMute(setMutedState), []);
+function LunarIceSurvey({ tel }: { tel: Telemetry }) {
+  const scanned = getScannedLunarTargets(tel.closestMoon, tel.moonDistance);
+  if (scanned.length === 0) return null;
+  const latest = scanned[scanned.length - 1];
   return (
-    <div className="quality">
-      <span className="label">Audio</span>
-      <button className={!muted ? "on" : ""} onClick={() => toggleMute()}>
-        {muted ? "Muted" : "On"}
-      </button>
+    <div className="artemis-compare">
+      <span className="label">
+        Ice Hunter Survey · {scanned.length} / {LUNAR_ICE_TARGETS.length} Polar PSRs Mapped (NASA LRO / LCROSS)
+      </span>
+      <span className="small">
+        Latest cold trap: <strong>{latest.name}</strong> ({latest.pole === "south" ? "South Pole" : "North Pole"},{" "}
+        {latest.floorTempK} K, ~{latest.iceConcentrationPct}% water ice). {latest.notes}
+      </span>
+    </div>
+  );
+}
+
+function AudioToggle() {
+  const [settings, setSettings] = useState(() => getAudioSettings());
+  useEffect(() => subscribeAudioSettings(setSettings), []);
+  return (
+    <div className="env-controls">
+      <div className="quality">
+        <span className="label">Audio</span>
+        <button className={!settings.muted ? "on" : ""} onClick={() => toggleMute()}>
+          {settings.muted ? "Muted" : "On"}
+        </button>
+        <button className={settings.musicEnabled ? "on" : ""} onClick={() => toggleMusic()} title="Procedural ambient space pad">
+          {settings.musicEnabled ? "Music: On" : "Music: Off"}
+        </button>
+        <button className={settings.voiceEnabled ? "on" : ""} onClick={() => toggleVoice()} title="Mission Control voice callouts">
+          {settings.voiceEnabled ? "Voice: On" : "Voice: Off"}
+        </button>
+      </div>
+      <label className="env-field env-time" title="Master audio volume">
+        <span className="label">Volume</span>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.02}
+          value={settings.muted ? 0 : settings.volume}
+          onChange={(e) => setVolume(parseFloat(e.target.value))}
+        />
+        <span className="mono small env-clock">
+          {settings.muted ? "0%" : `${Math.round(settings.volume * 100)}%`}
+        </span>
+      </label>
     </div>
   );
 }
