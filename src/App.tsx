@@ -27,6 +27,7 @@ import {
   playClick,
   playPartSnap,
   playRocketCheck,
+  playThunderStrike,
   subscribeMute,
   toggleMute,
 } from "./audio/soundManager";
@@ -752,7 +753,14 @@ function EnvironmentControls({
             key={w.id}
             type="button"
             className={weather === w.id ? "on" : ""}
-            onClick={() => onWeatherChange(w.id)}
+            onClick={() => {
+              if (w.id === "storm") {
+                playThunderStrike(0.8);
+              } else {
+                playClick();
+              }
+              onWeatherChange(w.id);
+            }}
           >
             {w.label}
           </button>
