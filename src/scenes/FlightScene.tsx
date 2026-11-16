@@ -755,7 +755,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       const dayHemi = THREE.MathUtils.smoothstep(rNorm.dot(sunVecEci), -0.15, 0.2);
       hemiRef.current.intensity =
         (0.03 + 0.55 * Math.exp(-Math.max(0, sim.altitude) / 15000)) *
-        (0.12 + 0.88 * dayHemi) *
+        (0.4 + 0.6 * dayHemi) *
         (0.18 + 0.82 * transitLightFactor);
     }
     if (padLightRef.current) {
