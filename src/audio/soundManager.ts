@@ -1,4 +1,5 @@
-// Procedural Web Audio API sound effects & continuous flight audio engine (Role 4).
+// Procedural Web Audio API sound effects, spatial thunder, ambient space music,
+// NASA voice callouts, and continuous flight audio engine (Role 4).
 // Uses zero external audio files so it works offline with 0 KB asset overhead.
 
 export type AlertSoundType =
@@ -7,6 +8,13 @@ export type AlertSoundType =
   | "memory_full"
   | "failure"
   | "station_outage";
+
+export type StagePieceSound =
+  | "boosters"
+  | "stage1"
+  | "stage2"
+  | "escapeTower"
+  | "serviceModule";
 
 export interface FlightAudioParams {
   /** True when the 3D scene is running and not paused/completed. */
@@ -33,9 +41,20 @@ export interface FlightAudioParams {
   weather: "clear" | "cloudy" | "rain" | "storm";
 }
 
-type MuteListener = (muted: boolean) => void;
+export interface AudioSettingsState {
+  muted: boolean;
+  volume: number;
+  musicEnabled: boolean;
+  voiceEnabled: boolean;
+}
 
-const STORAGE_KEY = "mission_architect_muted";
+type MuteListener = (muted: boolean) => void;
+type SettingsListener = (state: AudioSettingsState) => void;
+
+const STORAGE_KEY_MUTED = "mission_architect_muted";
+const STORAGE_KEY_VOLUME = "mission_architect_volume";
+const STORAGE_KEY_MUSIC = "mission_architect_music";
+const STORAGE_KEY_VOICE = "mission_architect_voice";
 
 interface ContinuousLoopNodes {
   engineSource: AudioBufferSourceNode;
@@ -56,39 +75,104 @@ interface ContinuousLoopNodes {
   spaceGain: GainNode;
 }
 
+interface MusicNodes {
+  oscs: OscillatorNode[];
+  lfo: OscillatorNode;
+  filter: BiquadFilterNode;
+  gain: GainNode;
+  chordTimer: number;
+}
+
 class SoundManager {
   private ctx: AudioContext | null = null;
+  private masterGain: GainNode | null = null;
   private muted: boolean = false;
+  private volume: number = 0.8;
+  private musicEnabled: boolean = false;
+  private voiceEnabled: boolean = true;
+  private tabHidden: boolean = false;
+
   private listeners: Set<MuteListener> = new Set();
+  private settingsListeners: Set<SettingsListener> = new Set();
   private activeLaunchStop: (() => void) | null = null;
   private loopNodes: ContinuousLoopNodes | null = null;
+  private musicNodes: MusicNodes | null = null;
   private lastThunderAt: number = 0;
+  private lastFlightUpdateMs: number = 0;
 
   constructor() {
     if (typeof window !== "undefined") {
       try {
-        this.muted = window.localStorage.getItem(STORAGE_KEY) === "true";
+        this.muted = window.localStorage.getItem(STORAGE_KEY_MUTED) === "true";
+        const savedVol = parseFloat(window.localStorage.getItem(STORAGE_KEY_VOLUME) ?? "0.8");
+        if (!Number.isNaN(savedVol)) {
+          this.volume = Math.max(0, Math.min(1, savedVol));
+        }
+        const savedMusic = window.localStorage.getItem(STORAGE_KEY_MUSIC);
+        if (savedMusic !== null) this.musicEnabled = savedMusic === "true";
+        const savedVoice = window.localStorage.getItem(STORAGE_KEY_VOICE);
+        if (savedVoice !== null) this.voiceEnabled = savedVoice === "true";
       } catch {
-        this.muted = false;
+        // Ignore storage errors
       }
+
+      // #10: Auto-suspend audio & voice when the browser tab loses visibility
+      document.addEventListener("visibilitychange", () => {
+        this.tabHidden = document.hidden;
+        if (this.tabHidden) {
+          this.ctx?.suspend().catch(() => {});
+          if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+          }
+        } else if (!this.muted && this.ctx && this.ctx.state === "suspended") {
+          this.ctx.resume().catch(() => {});
+        }
+      });
     }
   }
 
   private getContext(): AudioContext | null {
-    if (this.muted || typeof window === "undefined") return null;
+    if (this.muted || this.tabHidden || typeof window === "undefined") return null;
     if (!this.ctx) {
       const AudioCtx =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.muted ? 0 : this.volume;
+      this.masterGain.connect(this.ctx.destination);
     }
-    if (this.ctx.state === "suspended") {
-      this.ctx.resume().catch(() => {
-        // Ignore autoplay restrictions until user interaction
-      });
+    if (this.ctx.state === "suspended" && !this.tabHidden) {
+      this.ctx.resume().catch(() => {});
     }
     return this.ctx;
+  }
+
+  private getDestination(): AudioNode | null {
+    const ctx = this.getContext();
+    if (!ctx) return null;
+    if (!this.masterGain) {
+      this.masterGain = ctx.createGain();
+      this.masterGain.gain.value = this.muted ? 0 : this.volume;
+      this.masterGain.connect(ctx.destination);
+    }
+    return this.masterGain;
+  }
+
+  private notifyListeners(): void {
+    const state = this.getSettings();
+    this.listeners.forEach((fn) => fn(this.muted));
+    this.settingsListeners.forEach((fn) => fn(state));
+  }
+
+  public getSettings(): AudioSettingsState {
+    return {
+      muted: this.muted,
+      volume: this.volume,
+      musicEnabled: this.musicEnabled,
+      voiceEnabled: this.voiceEnabled,
+    };
   }
 
   public isMuted(): boolean {
@@ -97,21 +181,30 @@ class SoundManager {
 
   public setMuted(value: boolean): boolean {
     this.muted = value;
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(value ? 0 : this.volume, this.ctx.currentTime, 0.04);
+    }
     if (value) {
       if (this.activeLaunchStop) {
         this.activeLaunchStop();
         this.activeLaunchStop = null;
       }
       this.stopFlightAudio();
+      this.stopMusicNodes();
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+    } else if (this.musicEnabled) {
+      this.startMusicNodes();
     }
     if (typeof window !== "undefined") {
       try {
-        window.localStorage.setItem(STORAGE_KEY, String(value));
+        window.localStorage.setItem(STORAGE_KEY_MUTED, String(value));
       } catch {
-        // Ignore storage errors in private browsing
+        // Ignore storage errors
       }
     }
-    this.listeners.forEach((fn) => fn(this.muted));
+    this.notifyListeners();
     return this.muted;
   }
 
@@ -124,6 +217,93 @@ class SoundManager {
     return next;
   }
 
+  public getVolume(): number {
+    return this.volume;
+  }
+
+  public setVolume(val: number): number {
+    this.volume = Math.max(0, Math.min(1, val));
+    if (this.volume > 0 && this.muted) {
+      this.muted = false;
+      try {
+        window.localStorage.setItem(STORAGE_KEY_MUTED, "false");
+      } catch {
+        // Ignore
+      }
+    }
+    if (this.masterGain && this.ctx) {
+      this.masterGain.gain.setTargetAtTime(
+        this.muted ? 0 : this.volume,
+        this.ctx.currentTime,
+        0.03,
+      );
+    }
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(STORAGE_KEY_VOLUME, String(this.volume));
+      } catch {
+        // Ignore
+      }
+    }
+    this.notifyListeners();
+    return this.volume;
+  }
+
+  public isMusicEnabled(): boolean {
+    return this.musicEnabled;
+  }
+
+  public setMusicEnabled(enabled: boolean): boolean {
+    this.musicEnabled = enabled;
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(STORAGE_KEY_MUSIC, String(enabled));
+      } catch {
+        // Ignore
+      }
+    }
+    if (enabled && !this.muted) {
+      this.startMusicNodes();
+    } else {
+      this.stopMusicNodes();
+    }
+    this.notifyListeners();
+    return this.musicEnabled;
+  }
+
+  public toggleMusic(): boolean {
+    return this.setMusicEnabled(!this.musicEnabled);
+  }
+
+  public isVoiceEnabled(): boolean {
+    return this.voiceEnabled;
+  }
+
+  public setVoiceEnabled(enabled: boolean): boolean {
+    this.voiceEnabled = enabled;
+    if (!enabled && typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(STORAGE_KEY_VOICE, String(enabled));
+      } catch {
+        // Ignore
+      }
+    }
+    this.notifyListeners();
+    return this.voiceEnabled;
+  }
+
+  public toggleVoice(): boolean {
+    const next = !this.voiceEnabled;
+    this.setVoiceEnabled(next);
+    if (next) {
+      this.speakCallout("Telemetry voice online");
+    }
+    return next;
+  }
+
   public subscribe(listener: MuteListener): () => void {
     this.listeners.add(listener);
     return () => {
@@ -131,17 +311,121 @@ class SoundManager {
     };
   }
 
+  public subscribeSettings(listener: SettingsListener): () => void {
+    this.settingsListeners.add(listener);
+    return () => {
+      this.settingsListeners.delete(listener);
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // #2: Procedural Ambient Space Music Pad (warm evolving chord progression)
+  // ---------------------------------------------------------------------------
+  private startMusicNodes(): void {
+    if (this.musicNodes || this.muted) return;
+    const ctx = this.getContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+
+    const chords: [number, number, number, number][] = [
+      [130.81, 196.0, 246.94, 293.66], // Cmaj9 (C3, G3, B3, D4)
+      [110.0, 164.81, 220.0, 261.63],  // Am7   (A2, E3, A3, C4)
+      [87.31, 130.81, 174.61, 220.0],  // Fmaj7 (F2, C3, F3, A3)
+      [98.0, 146.83, 196.0, 246.94],   // G6    (G2, D3, G3, B3)
+    ];
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 340;
+    filter.Q.value = 0.7;
+
+    // Slow LFO breathing on the pad filter
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.type = "sine";
+    lfo.frequency.value = 0.12;
+    lfoGain.gain.value = 110;
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.055, ctx.currentTime + 1.8);
+
+    const oscs: OscillatorNode[] = [];
+    chords[0].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      osc.type = i % 2 === 0 ? "sine" : "triangle";
+      osc.frequency.value = freq;
+      osc.detune.value = (i - 1.5) * 4;
+      osc.connect(filter);
+      osc.start(ctx.currentTime);
+      oscs.push(osc);
+    });
+
+    lfo.start(ctx.currentTime);
+    filter.connect(gain);
+    gain.connect(dest);
+
+    let chordIdx = 0;
+    const chordTimer = window.setInterval(() => {
+      if (!this.ctx || this.muted || !this.musicEnabled) return;
+      chordIdx = (chordIdx + 1) % chords.length;
+      const nextChord = chords[chordIdx];
+      const tNow = this.ctx.currentTime;
+      oscs.forEach((osc, idx) => {
+        osc.frequency.setTargetAtTime(nextChord[idx], tNow, 1.4);
+      });
+    }, 8000);
+
+    this.musicNodes = { oscs, lfo, filter, gain, chordTimer };
+  }
+
+  private stopMusicNodes(): void {
+    if (!this.musicNodes) return;
+    window.clearInterval(this.musicNodes.chordTimer);
+    try {
+      this.musicNodes.oscs.forEach((o) => o.stop());
+      this.musicNodes.lfo.stop();
+      this.musicNodes.gain.disconnect();
+    } catch {
+      // Ignore
+    }
+    this.musicNodes = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // #5: Mission Control Voice Callouts (Web Speech API)
+  // ---------------------------------------------------------------------------
+  public speakCallout(text: string): void {
+    if (this.muted || !this.voiceEnabled || this.tabHidden || typeof window === "undefined") return;
+    if (!("speechSynthesis" in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.lang = "en-US";
+      utter.rate = 1.06;
+      utter.pitch = 0.96;
+      utter.volume = Math.max(0.15, Math.min(1, this.volume * 0.85));
+      window.speechSynthesis.speak(utter);
+    } catch {
+      // Ignore speech synthesis errors on unsupported browsers
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Continuous Flight, Engine, Rain & Space Cabin Loop
+  // ---------------------------------------------------------------------------
   private ensureLoopNodes(ctx: AudioContext): ContinuousLoopNodes {
     if (this.loopNodes) return this.loopNodes;
+    const dest = this.getDestination() ?? ctx.destination;
 
     const durationSec = 6.0;
     const sampleRate = ctx.sampleRate;
     const frameCount = Math.floor(sampleRate * durationSec);
     const fadeSamples = Math.floor(sampleRate * 0.2);
 
-    // -------------------------------------------------------------------------
     // 1. Engine Thrust Buffer: Warm saturated brown noise with strong 70–280 Hz body
-    // -------------------------------------------------------------------------
     const engineBuffer = ctx.createBuffer(1, frameCount, sampleRate);
     const engineData = engineBuffer.getChannelData(0);
     let e0 = 0.0;
@@ -150,7 +434,6 @@ class SoundManager {
       const t = i / sampleRate;
       const white = Math.random() * 2 - 1;
       e0 = 0.945 * e0 + 0.055 * white;
-      // Add organic rocket exhaust pressure chug (16–28 Hz) + warm tanh saturation
       const chug = 0.82 + 0.18 * Math.sin(t * 21.0 * Math.PI * 2) * Math.cos(t * 9.5 * Math.PI * 2);
       const sample = Math.tanh(e0 * 5.2) * chug;
       engineData[i] = sample;
@@ -171,8 +454,6 @@ class SoundManager {
     engineSource.buffer = engineBuffer;
     engineSource.loop = true;
 
-    // Two-stage lowpass at 200–310 Hz: gives full, loud low-mid punch on any speaker
-    // while cutting off >450 Hz static hiss
     const engineFilter1 = ctx.createBiquadFilter();
     engineFilter1.type = "lowpass";
     engineFilter1.frequency.value = 240;
@@ -186,8 +467,6 @@ class SoundManager {
     const engineNoiseGain = ctx.createGain();
     engineNoiseGain.gain.value = 0.0001;
 
-    // Three harmonic oscillators (55 Hz sub, 110 Hz body, 165 Hz upper-stage resonance)
-    // so the rocket is clearly audible on both laptop speakers and headphones
     const subOsc1 = ctx.createOscillator();
     subOsc1.type = "sine";
     subOsc1.frequency.value = 55;
@@ -207,9 +486,7 @@ class SoundManager {
     const subGain = ctx.createGain();
     subGain.gain.value = 0.0001;
 
-    // -------------------------------------------------------------------------
-    // 2. Dedicated Rain & Wind Patter Buffer (textured droplets + wind swells)
-    // -------------------------------------------------------------------------
+    // 2. Dedicated Rain & Wind Patter Buffer
     const rainBuffer = ctx.createBuffer(1, frameCount, sampleRate);
     const rainData = rainBuffer.getChannelData(0);
     let r0 = 0.0;
@@ -219,11 +496,9 @@ class SoundManager {
     for (let i = 0; i < frameCount; i++) {
       const t = i / sampleRate;
       const white = Math.random() * 2 - 1;
-      // Pink-ish water patter + soft wind swell
       r0 = 0.91 * r0 + 0.09 * white;
       r1 = 0.78 * r1 + 0.22 * r0;
 
-      // Random soft raindrop micro-impulses (thousands of gentle drops per second, no harsh clicks)
       if (Math.random() < 0.018) {
         dropEnv = Math.min(1.0, dropEnv + 0.35 + Math.random() * 0.45);
       }
@@ -252,7 +527,6 @@ class SoundManager {
     rainSource.buffer = rainBuffer;
     rainSource.loop = true;
 
-    // Shape the rain between 180 Hz and 520 Hz so it sounds like warm falling rain & wind, not TV static
     const rainHighpass = ctx.createBiquadFilter();
     rainHighpass.type = "highpass";
     rainHighpass.frequency.value = 175;
@@ -264,41 +538,35 @@ class SoundManager {
     const rainGain = ctx.createGain();
     rainGain.gain.value = 0.0001;
 
-    // -------------------------------------------------------------------------
-    // 3. Deep-Space Spacecraft Cabin & Gyro Ambience (heard when in space > 80 km)
-    // -------------------------------------------------------------------------
+    // 3. Deep-Space Spacecraft Cabin & Gyro Ambience (> 80 km)
     const spaceOsc1 = ctx.createOscillator();
     spaceOsc1.type = "sine";
-    spaceOsc1.frequency.value = 110.0; // A2 cabin carrier
+    spaceOsc1.frequency.value = 110.0;
     const spaceOsc2 = ctx.createOscillator();
     spaceOsc2.type = "sine";
-    spaceOsc2.frequency.value = 164.81; // E3 fifth harmonic
+    spaceOsc2.frequency.value = 164.81;
     const spaceGain = ctx.createGain();
     spaceGain.gain.value = 0.0001;
 
-    // Wire Engine path
     engineSource.connect(engineFilter1);
     engineFilter1.connect(engineFilter2);
     engineFilter2.connect(engineNoiseGain);
-    engineNoiseGain.connect(ctx.destination);
+    engineNoiseGain.connect(dest);
 
-    // Wire Engine Harmonics path
     subOsc1.connect(subFilter);
     subOsc2.connect(subFilter);
     subOsc3.connect(subFilter);
     subFilter.connect(subGain);
-    subGain.connect(ctx.destination);
+    subGain.connect(dest);
 
-    // Wire Rain path
     rainSource.connect(rainHighpass);
     rainHighpass.connect(rainLowpass);
     rainLowpass.connect(rainGain);
-    rainGain.connect(ctx.destination);
+    rainGain.connect(dest);
 
-    // Wire Space Cabin path
     spaceOsc1.connect(spaceGain);
     spaceOsc2.connect(spaceGain);
-    spaceGain.connect(ctx.destination);
+    spaceGain.connect(dest);
 
     const now = ctx.currentTime;
     engineSource.start(now);
@@ -331,12 +599,21 @@ class SoundManager {
   }
 
   /**
-   * Updates continuous flight, vacuum thruster, re-entry, and rain/storm ambience every frame.
+   * #9: Throttled to 20 Hz (every 50 ms) so high-warp flight and school-grade laptops
+   * experience zero main-thread WebAudio parameter congestion.
    */
   public updateFlightAudio(params: FlightAudioParams): void {
-    if (this.muted) return;
+    if (this.muted || this.tabHidden) return;
+    const nowPerf = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (nowPerf - this.lastFlightUpdateMs < 48) return;
+    this.lastFlightUpdateMs = nowPerf;
+
     const ctx = this.getContext();
     if (!ctx || ctx.state !== "running") return;
+
+    if (this.musicEnabled && !this.musicNodes) {
+      this.startMusicNodes();
+    }
 
     const nodes = this.ensureLoopNodes(ctx);
     const now = ctx.currentTime;
@@ -372,7 +649,6 @@ class SoundManager {
 
     if (anyEngineBurning) {
       if (burningBoostersOrS1 || prelaunchIgnition) {
-        // Powerful, full-bodied Stage 1 & Booster roar (strong 90–280 Hz presence)
         const altFactor = Math.max(0.65, Math.exp(-Math.max(0, altitudeM) / 120000));
         targetNoiseGain = 0.68 * altFactor * effThrottle;
         targetCutoff1 = 195 + 85 * altFactor;
@@ -382,7 +658,6 @@ class SoundManager {
         targetFreq2 = 104 + 18 * effThrottle;
         targetFreq3 = 156 + 24 * effThrottle;
       } else if (burningS2) {
-        // Upper Stage (Stage 2 / ICPS) climb & Trans-Lunar Injection burn in space
         targetNoiseGain = 0.44 * effThrottle;
         targetCutoff1 = 185;
         targetCutoff2 = 230;
@@ -391,7 +666,6 @@ class SoundManager {
         targetFreq2 = 124 + 16 * effThrottle;
         targetFreq3 = 186 + 22 * effThrottle;
       } else if (burningService) {
-        // Service Module orbital maneuvering burn in deep space (TLI / TCM)
         targetNoiseGain = 0.36 * effThrottle;
         targetCutoff1 = 175;
         targetCutoff2 = 215;
@@ -402,7 +676,6 @@ class SoundManager {
       }
     }
 
-    // Re-entry plasma roar when the capsule hits entry interface
     if (active && flying && heat > 0.02) {
       const h = Math.min(1, heat);
       targetNoiseGain = Math.max(targetNoiseGain, 0.58 * h);
@@ -422,7 +695,6 @@ class SoundManager {
     nodes.subOsc2.frequency.setTargetAtTime(targetFreq2, now, tc);
     nodes.subOsc3.frequency.setTargetAtTime(targetFreq3, now, tc);
 
-    // --- Rain & Storm Wind Ambience on the Pad and Low Altitude ---
     const nearGroundFactor = Math.max(0, 1 - Math.max(0, cameraAltitudeM) / 25000);
     const isStorm = weather === "storm";
     const isRain = weather === "rain" || isStorm;
@@ -435,13 +707,11 @@ class SoundManager {
     nodes.rainGain.gain.setTargetAtTime(targetRainGain, now, 0.15);
     nodes.rainLowpass.frequency.setTargetAtTime(targetRainLowpass, now, 0.15);
 
-    // --- Deep-Space Spacecraft Cabin & Gyro Hum (> 80 km altitude) ---
     const inSpace = active && flying && altitudeM > 80000;
     const targetSpaceGain = inSpace ? 0.038 : 0.0001;
     nodes.spaceGain.gain.setTargetAtTime(targetSpaceGain, now, 0.25);
   }
 
-  /** Stops all continuous flight audio loops cleanly. */
   public stopFlightAudio(): void {
     if (!this.loopNodes) return;
     try {
@@ -463,17 +733,93 @@ class SoundManager {
     this.loopNodes = null;
   }
 
-  /**
-   * Synthesizes a realistic multi-stage rolling thunderclap (3.8 seconds) when weather === "storm".
-   */
-  public playThunderStrike(intensity: number = 0.85): void {
+  // ---------------------------------------------------------------------------
+  // #3: Heavy Pyrotechnic Stage Separation Sound (Boosters / Stage 1 / Fairing)
+  // ---------------------------------------------------------------------------
+  public playStageSeparation(piece: StagePieceSound = "stage1"): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
+
+    const now = ctx.currentTime;
+
+    // 1. Deep pyrotechnic bolt thump (low-end punch)
+    const thumpOsc = ctx.createOscillator();
+    const thumpGain = ctx.createGain();
+    thumpOsc.type = "sine";
+    const startHz = piece === "boosters" || piece === "stage1" ? 135 : 175;
+    thumpOsc.frequency.setValueAtTime(startHz, now);
+    thumpOsc.frequency.exponentialRampToValueAtTime(34, now + 0.32);
+
+    thumpGain.gain.setValueAtTime(0.42, now);
+    thumpGain.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+
+    thumpOsc.connect(thumpGain);
+    thumpGain.connect(dest);
+    thumpOsc.start(now);
+    thumpOsc.stop(now + 0.35);
+
+    // 2. Pneumatic pusher release burst (filtered warm burst)
+    const dur = 0.26;
+    const len = Math.floor(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let b = 0;
+    for (let i = 0; i < len; i++) {
+      const white = Math.random() * 2 - 1;
+      b = 0.88 * b + 0.12 * white;
+      data[i] = b * Math.exp(-(i / len) * 4.5);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.setValueAtTime(360, now);
+    filter.frequency.exponentialRampToValueAtTime(110, now + dur);
+
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(0.32, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+    noise.connect(filter);
+    filter.connect(nGain);
+    nGain.connect(dest);
+    noise.start(now);
+    noise.stop(now + dur);
+
+    // 3. Mechanical clamp ring
+    const ringOsc = ctx.createOscillator();
+    const ringGain = ctx.createGain();
+    ringOsc.type = "triangle";
+    ringOsc.frequency.setValueAtTime(piece === "escapeTower" ? 580 : 420, now + 0.02);
+    ringOsc.frequency.exponentialRampToValueAtTime(190, now + 0.18);
+    ringGain.gain.setValueAtTime(0.18, now + 0.02);
+    ringGain.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+
+    ringOsc.connect(ringGain);
+    ringGain.connect(dest);
+    ringOsc.start(now + 0.02);
+    ringOsc.stop(now + 0.2);
+  }
+
+  // ---------------------------------------------------------------------------
+  // #4: Spatial Stereo Panned & Distance-Delayed Rolling Thunder
+  // ---------------------------------------------------------------------------
+  public playThunderStrike(
+    intensity: number = 0.85,
+    pan: number = 0,
+    delaySec: number = 0,
+  ): void {
+    const ctx = this.getContext();
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     if (now - this.lastThunderAt < 1.25) return;
     this.lastThunderAt = now;
 
+    const startAt = now + Math.max(0, Math.min(1.2, delaySec));
     const scale = Math.max(0.3, Math.min(1.0, intensity));
     const durationSec = 3.8;
     const sampleRate = ctx.sampleRate;
@@ -481,7 +827,6 @@ class SoundManager {
     const buffer = ctx.createBuffer(1, frameCount, sampleRate);
     const data = buffer.getChannelData(0);
 
-    // Synthesize 4 distinct acoustic thunder swells with strong 80–260 Hz low-mid punch
     let b0 = 0.0;
     let peak = 0.001;
     const phaseJitter = Math.random() * 1.5;
@@ -518,66 +863,71 @@ class SoundManager {
     const filter1 = ctx.createBiquadFilter();
     filter1.type = "lowpass";
     filter1.Q.value = 1.4;
-    filter1.frequency.setValueAtTime(320, now);
-    filter1.frequency.linearRampToValueAtTime(185, now + 0.5);
-    filter1.frequency.linearRampToValueAtTime(220, now + 0.9);
-    filter1.frequency.linearRampToValueAtTime(145, now + 1.8);
-    filter1.frequency.linearRampToValueAtTime(95, now + durationSec);
+    filter1.frequency.setValueAtTime(320, startAt);
+    filter1.frequency.linearRampToValueAtTime(185, startAt + 0.5);
+    filter1.frequency.linearRampToValueAtTime(220, startAt + 0.9);
+    filter1.frequency.linearRampToValueAtTime(145, startAt + 1.8);
+    filter1.frequency.linearRampToValueAtTime(95, startAt + durationSec);
 
     const filter2 = ctx.createBiquadFilter();
     filter2.type = "lowpass";
     filter2.Q.value = 0.8;
-    filter2.frequency.setValueAtTime(360, now);
-    filter2.frequency.linearRampToValueAtTime(160, now + durationSec);
+    filter2.frequency.setValueAtTime(360, startAt);
+    filter2.frequency.linearRampToValueAtTime(160, startAt + durationSec);
 
     const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(0.01, now);
-    masterGain.gain.linearRampToValueAtTime(0.62 * scale, now + 0.12);
-    masterGain.gain.linearRampToValueAtTime(0.48 * scale, now + 0.95);
-    masterGain.gain.linearRampToValueAtTime(0.34 * scale, now + 1.9);
-    masterGain.gain.exponentialRampToValueAtTime(0.001, now + durationSec);
+    masterGain.gain.setValueAtTime(0.01, startAt);
+    masterGain.gain.linearRampToValueAtTime(0.62 * scale, startAt + 0.12);
+    masterGain.gain.linearRampToValueAtTime(0.48 * scale, startAt + 0.95);
+    masterGain.gain.linearRampToValueAtTime(0.34 * scale, startAt + 1.9);
+    masterGain.gain.exponentialRampToValueAtTime(0.001, startAt + durationSec);
 
-    // Audible low-mid + sub thunder boom (50–115 Hz)
     const subOsc = ctx.createOscillator();
     const subGain = ctx.createGain();
     subOsc.type = "triangle";
-    subOsc.frequency.setValueAtTime(112, now);
-    subOsc.frequency.linearRampToValueAtTime(58, now + 0.55);
-    subOsc.frequency.linearRampToValueAtTime(74, now + 0.95);
-    subOsc.frequency.linearRampToValueAtTime(46, now + 2.6);
+    subOsc.frequency.setValueAtTime(112, startAt);
+    subOsc.frequency.linearRampToValueAtTime(58, startAt + 0.55);
+    subOsc.frequency.linearRampToValueAtTime(74, startAt + 0.95);
+    subOsc.frequency.linearRampToValueAtTime(46, startAt + 2.6);
 
     const subFilter = ctx.createBiquadFilter();
     subFilter.type = "lowpass";
     subFilter.frequency.value = 160;
 
-    subGain.gain.setValueAtTime(0.001, now);
-    subGain.gain.linearRampToValueAtTime(0.32 * scale, now + 0.15);
-    subGain.gain.linearRampToValueAtTime(0.24 * scale, now + 0.9);
-    subGain.gain.linearRampToValueAtTime(0.16 * scale, now + 1.8);
-    subGain.gain.exponentialRampToValueAtTime(0.001, now + 2.8);
+    subGain.gain.setValueAtTime(0.001, startAt);
+    subGain.gain.linearRampToValueAtTime(0.32 * scale, startAt + 0.15);
+    subGain.gain.linearRampToValueAtTime(0.24 * scale, startAt + 0.9);
+    subGain.gain.linearRampToValueAtTime(0.16 * scale, startAt + 1.8);
+    subGain.gain.exponentialRampToValueAtTime(0.001, startAt + 2.8);
+
+    // Optional StereoPannerNode for directional thunder
+    let outNode: AudioNode = dest;
+    if ("createStereoPanner" in ctx) {
+      const panner = ctx.createStereoPanner();
+      panner.pan.setValueAtTime(Math.max(-0.85, Math.min(0.85, pan)), startAt);
+      panner.connect(dest);
+      outNode = panner;
+    }
 
     noise.connect(filter1);
     filter1.connect(filter2);
     filter2.connect(masterGain);
-    masterGain.connect(ctx.destination);
+    masterGain.connect(outNode);
 
     subOsc.connect(subFilter);
     subFilter.connect(subGain);
-    subGain.connect(ctx.destination);
+    subGain.connect(outNode);
 
-    noise.start(now);
-    noise.stop(now + durationSec);
-    subOsc.start(now);
-    subOsc.stop(now + 2.85);
+    noise.start(startAt);
+    noise.stop(startAt + durationSec);
+    subOsc.start(startAt);
+    subOsc.stop(startAt + 2.85);
   }
 
-  /**
-   * Plays an authentic NASA Apollo/Artemis Quindar radio beep (2525 Hz / 2475 Hz)
-   * and telemetry chime on spaceflight phase transitions so deep space feels alive.
-   */
   public playSpaceTelemetryCue(kind: "burn_start" | "coast" | "lunar_flyby" | "entry" = "coast"): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
 
@@ -590,7 +940,7 @@ class SoundManager {
     qGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
 
     quindar.connect(qGain);
-    qGain.connect(ctx.destination);
+    qGain.connect(dest);
     quindar.start(now);
     quindar.stop(now + 0.16);
 
@@ -614,16 +964,16 @@ class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.16);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(dest);
       osc.start(t0);
       osc.stop(t0 + 0.17);
     });
   }
 
-  /** Plays a parachute canopy deployment thump when main chutes open. */
   public playParachuteDeploy(): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -637,16 +987,16 @@ class SoundManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
 
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(dest);
 
     osc.start(now);
     osc.stop(now + 0.46);
   }
 
-  /** Subtle UI click for navigation and buttons. */
   public playClick(): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -660,16 +1010,16 @@ class SoundManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
 
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(dest);
 
     osc.start(now);
     osc.stop(now + 0.05);
   }
 
-  /** Mechanical latch sound when snapping/removing spacecraft parts in the Workshop. */
   public playPartSnap(added: boolean = true): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
 
@@ -685,7 +1035,7 @@ class SoundManager {
     gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
 
     osc1.connect(gain1);
-    gain1.connect(ctx.destination);
+    gain1.connect(dest);
     osc1.start(now);
     osc1.stop(now + 0.1);
 
@@ -697,15 +1047,15 @@ class SoundManager {
     gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
 
     osc2.connect(gain2);
-    gain2.connect(ctx.destination);
+    gain2.connect(dest);
     osc2.start(now + 0.03);
     osc2.stop(now + 0.125);
   }
 
-  /** Smooth frequency sweep when switching between LEO, SSO, GEO or Lunar Polar orbits. */
   public playOrbitSelect(): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -720,16 +1070,16 @@ class SoundManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
 
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(dest);
 
     osc.start(now);
     osc.stop(now + 0.19);
   }
 
-  /** Validation sound when checking if spacecraft mass and orbit fit the chosen launch vehicle. */
   public playRocketCheck(fits: boolean): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const notes = fits ? [523.25, 659.25] : [220, 185];
@@ -746,17 +1096,17 @@ class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.14);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(dest);
 
       osc.start(t0);
       osc.stop(t0 + 0.15);
     });
   }
 
-  /** Countdown telemetry beep before rocket ignition. */
   public playCountdownBeep(isLiftoff: boolean = false): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -770,15 +1120,12 @@ class SoundManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(dest);
 
     osc.start(now);
     osc.stop(now + dur + 0.01);
   }
 
-  /**
-   * Synthesizes a multi-layered rocket engine ignition and ascent rumble (for standalone Launch.tsx).
-   */
   public playLaunchRumbling(durationSec: number = 4.2): () => void {
     if (this.activeLaunchStop) {
       this.activeLaunchStop();
@@ -786,7 +1133,8 @@ class SoundManager {
     }
 
     const ctx = this.getContext();
-    if (!ctx) return () => {};
+    const dest = this.getDestination();
+    if (!ctx || !dest) return () => {};
 
     const now = ctx.currentTime;
     const sampleRate = ctx.sampleRate;
@@ -841,10 +1189,10 @@ class SoundManager {
     noiseSource.connect(filter1);
     filter1.connect(filter2);
     filter2.connect(noiseGain);
-    noiseGain.connect(ctx.destination);
+    noiseGain.connect(dest);
 
     subOsc.connect(subGain);
-    subGain.connect(ctx.destination);
+    subGain.connect(dest);
 
     noiseSource.start(now);
     noiseSource.stop(now + durationSec);
@@ -870,10 +1218,10 @@ class SoundManager {
     return stop;
   }
 
-  /** Plays an in-flight warning sound for Mission Control random events. */
   public playAlert(type: AlertSoundType = "solar_storm"): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
 
@@ -891,7 +1239,7 @@ class SoundManager {
         gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.1);
 
         osc.connect(gain);
-        gain.connect(ctx.destination);
+        gain.connect(dest);
         osc.start(t0);
         osc.stop(t0 + 0.105);
       });
@@ -908,15 +1256,15 @@ class SoundManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
 
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(dest);
     osc.start(now);
     osc.stop(now + 0.26);
   }
 
-  /** Telemetry packet chirp when transmitting data over a ground station. */
   public playDownlinkBeep(): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const notes = [1174.66, 1567.98, 1975.53];
@@ -932,16 +1280,16 @@ class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.04);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(dest);
       osc.start(t0);
       osc.stop(t0 + 0.045);
     });
   }
 
-  /** Soft radar ping when detecting an active wildfire (FIRMS) or lunar polar ice target. */
   public playTargetDetected(): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
@@ -954,15 +1302,15 @@ class SoundManager {
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
 
     osc.connect(gain);
-    gain.connect(ctx.destination);
+    gain.connect(dest);
     osc.start(now);
     osc.stop(now + 0.17);
   }
 
-  /** End-of-mission fanfare (success) or power-down cadence (failure). */
   public playMissionResult(passed: boolean, stars: 1 | 2 | 3 = 3): void {
     const ctx = this.getContext();
-    if (!ctx) return;
+    const dest = this.getDestination();
+    if (!ctx || !dest) return;
 
     const now = ctx.currentTime;
     const chord = passed
@@ -984,7 +1332,7 @@ class SoundManager {
       gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
 
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(dest);
       osc.start(t0);
       osc.stop(t0 + dur + 0.02);
     });
@@ -996,16 +1344,29 @@ export const soundManager = new SoundManager();
 export const isMuted = () => soundManager.isMuted();
 export const setMuted = (muted: boolean) => soundManager.setMuted(muted);
 export const toggleMute = () => soundManager.toggleMute();
+export const getVolume = () => soundManager.getVolume();
+export const setVolume = (vol: number) => soundManager.setVolume(vol);
+export const isMusicEnabled = () => soundManager.isMusicEnabled();
+export const toggleMusic = () => soundManager.toggleMusic();
+export const isVoiceEnabled = () => soundManager.isVoiceEnabled();
+export const toggleVoice = () => soundManager.toggleVoice();
+export const getAudioSettings = () => soundManager.getSettings();
 export const subscribeMute = (listener: MuteListener) => soundManager.subscribe(listener);
+export const subscribeAudioSettings = (listener: SettingsListener) =>
+  soundManager.subscribeSettings(listener);
+export const speakCallout = (text: string) => soundManager.speakCallout(text);
 export const playClick = () => soundManager.playClick();
 export const playPartSnap = (added?: boolean) => soundManager.playPartSnap(added);
+export const playStageSeparation = (piece?: StagePieceSound) =>
+  soundManager.playStageSeparation(piece);
 export const playOrbitSelect = () => soundManager.playOrbitSelect();
 export const playRocketCheck = (fits: boolean) => soundManager.playRocketCheck(fits);
 export const playCountdownBeep = (isLiftoff?: boolean) => soundManager.playCountdownBeep(isLiftoff);
 export const playLaunchRumbling = (durationSec?: number) => soundManager.playLaunchRumbling(durationSec);
 export const updateFlightAudio = (params: FlightAudioParams) => soundManager.updateFlightAudio(params);
 export const stopFlightAudio = () => soundManager.stopFlightAudio();
-export const playThunderStrike = (intensity?: number) => soundManager.playThunderStrike(intensity);
+export const playThunderStrike = (intensity?: number, pan?: number, delaySec?: number) =>
+  soundManager.playThunderStrike(intensity, pan, delaySec);
 export const playSpaceTelemetryCue = (kind?: "burn_start" | "coast" | "lunar_flyby" | "entry") =>
   soundManager.playSpaceTelemetryCue(kind);
 export const playParachuteDeploy = () => soundManager.playParachuteDeploy();
