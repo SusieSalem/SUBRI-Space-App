@@ -35,7 +35,7 @@ The first mission is **lunar orbit and return**: get a crew to the Moon and brin
 
 ### How a mission goes
 
-1. **Pick a mission.** Each one sets a destination, a duration and a budget.
+1. **The mission.** There is one: a crewed lunar orbit and return (Artemis-class). It sets the destination, the life support days needed and the budget.
 2. **Build the spacecraft.** Crew capsule, service module (engine and fuel), life support, solar panels, radiation shield. Some parts can't be fitted together.
 3. **Watch your resources.** Every part changes mass, power, budget and oxygen. A heavier ship needs a bigger rocket, and a bigger rocket costs more.
 4. **Pick a rocket.** Light, Medium or Heavy. It has to be able to send your spacecraft towards the Moon.
@@ -48,13 +48,13 @@ The astronaut rides inside the capsule and is the player's guide. The game is si
 
 The 3D scene uses our own GLSL shaders, written for this project and inspired by common Shadertoy techniques (we don't copy Shadertoy or Minecraft shader-pack code, since most of it is under licences we can't use):
 
-- Earth with continents, ocean sun glint, ice caps, clouds and city lights on the night side, all procedural for now
+- Earth from NASA's Blue Marble (day), Black Marble (city lights at night) and a land/water mask, with ocean sun glint and procedural clouds
 - An atmosphere shell with real Rayleigh and Mie scattering, so the limb is blue and the light turns orange near the terminator
-- The Moon with maria and craters, a starfield with a Milky Way band, and the Sun with a glow
+- The Moon from NASA's LRO colour map (CGI Moon Kit), with the near side facing the Earth; a starfield with a Milky Way band, and the Sun with a glow
 - Bloom, ACES tone mapping and a light vignette
 - One planet shader at real scale (`src/scenes/shaders/planet.ts`) draws the Earth, its atmosphere, clouds, the coast at the launch site, the Moon, the Sun and the stars from wherever the camera is, from 2 m above the pad to lunar distance. The world is re-centred on the spacecraft every frame and uses a logarithmic depth buffer, so real distances work without precision problems. There is a `High` / `Low` quality switch for slower machines.
 
-The Earth is procedural so the prototype runs without downloading anything. NASA's Blue Marble and Black Marble images can be dropped in later for the day and night sides.
+The Earth and Moon textures are 2K NASA images in `public/textures/`, bundled with the game, so it runs offline.
 
 ## Tech
 
@@ -84,18 +84,13 @@ npx gltf-transform optimize in.glb out.glb --texture-compress webp
 
 ## NASA data & archived datasets
 
-> **Archived Data Notice:** The wildfire hotspots (`public/data/fires.json`), solar storm records (`public/data/storms.json`), and lunar polar target coordinates (`public/data/moon/moon_targets.json`) bundled with the game are **archived real NASA datasets**, not live streaming feeds, so the game runs reliably offline in any browser without runtime API keys.
+> **Archived Data Notice:** The solar storm records (`public/data/storms.json`), the Artemis II path (`public/data/artemis2_trajectory.json`), the spacecraft and rocket figures (`public/data/crewed_lunar.json`) and the lunar polar targets (`public/data/moon/moon_targets.json`) bundled with the game are **archived real data**, not live feeds, so the game runs offline in any browser without API keys.
 
 | Source | Provider | What we use it for | Link |
 | --- | --- | --- | --- |
-| FIRMS active fire data | NASA Earthdata / LANCE | 24 real VIIRS/MODIS fire detections from the public FIRMS country-year archive: location, brightness temperature, FRP, date, satellite (`fires.json`; each record links the archive file it was copied from) | [firms.modaps.eosdis.nasa.gov](https://firms.modaps.eosdis.nasa.gov/) |
 | DONKI space weather database | NASA CCMC (`api.nasa.gov`) | 5 real 2024–2025 solar storms: DONKI event IDs, start times and Kp index (`storms.json`) | [ccmc.gsfc.nasa.gov/tools/DONKI](https://ccmc.gsfc.nasa.gov/tools/DONKI/) |
 | Solar proton event list | NOAA SWPC | Peak >10 MeV proton flux of those storms (`protonFluxPfu` in `storms.json`) | [swpc.noaa.gov](https://www.swpc.noaa.gov/noaa-scales-explanation) |
-| State-of-the-Art of Small Spacecraft Technology | NASA Ames Research Center | Reference ranges for the mass, power, cost, and data rates of spacecraft subsystems (`parts.json`; values are representative and game-balanced) | [nasa.gov/smallsat-institute/sst-soa](https://www.nasa.gov/smallsat-institute/sst-soa/) |
-| MODIS and VIIRS instrument specs | NASA Earth Observing System | Thermal infrared camera resolution baselines (375 m VIIRS, 1 km MODIS) | [earthdata.nasa.gov/data/tools/firms/faq](https://www.earthdata.nasa.gov/data/tools/firms/faq) |
-| Near Space Network & Deep Space Network | NASA SCaN | Real ground station sites and supported bands (`stations.json`); elevation masks and per-pass capacities are game-balanced | [nasa.gov/technology/space-comms/near-space-network-complexes](https://www.nasa.gov/technology/space-comms/near-space-network-complexes/) |
-| Launch Services Program (LSP / VADR) | NASA Kennedy Space Center | Representative launch vehicle mass-to-orbit capacities (`rockets.json`, `crewed_lunar.json`) | [elvperf.ksc.nasa.gov](https://elvperf.ksc.nasa.gov/Pages/Default.aspx) |
-| Orbital Debris Program Office (ODPO) | NASA Johnson Space Center | Background and orbital drag / debris avoidance mechanics | [orbitaldebris.jsc.nasa.gov](https://orbitaldebris.jsc.nasa.gov/) |
+| Launch Services Program (LSP / VADR) | NASA Kennedy Space Center | Representative launch vehicle payload capacities (`crewed_lunar.json`) | [elvperf.ksc.nasa.gov](https://elvperf.ksc.nasa.gov/Pages/Default.aspx) |
 | Orion Spacecraft Overview | NASA | Orion Crew Module mass, LAS mass, 5.0 m diameter, ECLSS consumables (`crewed_lunar.json`) | [nasa.gov/humans-in-space/orion-spacecraft](https://www.nasa.gov/humans-in-space/orion-spacecraft/) |
 | Orion Radiation Protection Plan | NASA | Crew radiation storm shelter & HERA dosimetry parameters (`crewed_lunar.json`) | [nasa.gov/missions/artemis/orion/...](https://www.nasa.gov/missions/artemis/orion/scientists-and-engineers-evaluate-orion-radiation-protection-plan/) |
 | Space Launch System (SLS) & Core Stage | NASA | SLS Block 1 TLI (>27 t), RS-25 thrust/Isp, 5-segment SRBs, ICPS RL10B-2 (`crewed_lunar.json`) | [nasa.gov/reference/space-launch-system-core-stage](https://www.nasa.gov/reference/space-launch-system-core-stage/) |
@@ -103,10 +98,10 @@ npx gltf-transform optimize in.glb out.glb --texture-compress webp
 | CGI Moon Kit (LRO LROC color map) | NASA Scientific Visualization Studio | Real lunar surface colour for the Moon in the 3D scene (`public/textures/moon_color.jpg`) | [svs.gsfc.nasa.gov/4720](https://svs.gsfc.nasa.gov/4720) |
 | Falcon 9 / Falcon Heavy Specs | SpaceX | Light/Medium crewed analogs: Merlin 1D / MVac thrust, Isp, stage masses (`crewed_lunar.json`) | [spacex.com/vehicles/falcon-heavy](https://www.spacex.com/vehicles/falcon-heavy/) |
 | Vulcan Centaur Overview | ULA | BE-4 first stage and Centaur V Dual-RL10C reference parameters (`crewed_lunar.json`) | [ulalaunch.com/rockets/vulcan-centaur](https://www.ulalaunch.com/rockets/vulcan-centaur) |
-| Planetary fact sheets | NASA NSSDCA | Earth and Moon radius, GM and rotation period used by the orbit formulas | [nssdc.gsfc.nasa.gov/planetary/factsheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html) |
+| Planetary fact sheets | NASA NSSDCA | Earth and Moon radius, GM and rotation period used by the flight physics | [nssdc.gsfc.nasa.gov/planetary/factsheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/earthfact.html) |
 | LRO & LCROSS Polar Volatiles | NASA GSFC | Permanently Shadowed Region ice targets (`public/data/moon/`) | [science.nasa.gov/mission/lro](https://science.nasa.gov/mission/lro/) |
 | Artemis II ephemeris | NASA JSC flight dynamics | Orion's real path on Artemis II (April 2026), from upper-stage separation to entry interface. Drawn in orange in the map view on the player's mission clock, with a "You vs Artemis II" table in the flight HUD: closest approach to the Moon (6,539 km), farthest from Earth (406,773 km) and entry time (`artemis2_trajectory.json`) | [nasa.gov/missions/artemis-ii/track-nasas-artemis-ii-mission-in-real-time](https://www.nasa.gov/missions/artemis-ii/track-nasas-artemis-ii-mission-in-real-time/) |
-| Blue Marble / Black Marble | NASA Earth Observatory | Earth day and night imagery references for the globe | [earthobservatory.nasa.gov](https://earthobservatory.nasa.gov/) |
+| Blue Marble / Black Marble | NASA Earth Observatory | 2K Earth day and night (city lights) textures on the globe (`public/textures/`) | [earthobservatory.nasa.gov](https://earthobservatory.nasa.gov/) |
 
 ### Challenge resources
 
@@ -114,13 +109,12 @@ How the resources listed on the [challenge page](https://www.spaceappschallenge.
 
 | Challenge resource | How it informs the game |
 | --- | --- |
-| [Design and Develop Science Missions](https://www.nasa.gov/wp-content/uploads/2025/04/250323-design-and-develop-science-mission.pdf?emrc=a454cf) (NASA) | Its four mission segments are the four things the player designs: launch segment (rocket), space segment (spacecraft and instruments), ground segment (stations and mission control), user segment (science return in the report). The need → concept → requirements → design → verify steps are the game loop. |
-| [General Mission Analysis Tool (GMAT)](https://software.nasa.gov/software/GSC-19468-1) (NASA) | Reference for the orbit regimes we offer (LEO, SSO, GEO, lunar). The game uses the simplified two-body formulas below, not GMAT propagation. |
+| [Design and Develop Science Missions](https://www.nasa.gov/wp-content/uploads/2025/04/250323-design-and-develop-science-mission.pdf?emrc=a454cf) (NASA) | Its mission segments map onto the game: launch segment (the rocket), space segment (the crew spacecraft) and the mission report as the review of the result. The need → concept → requirements → design → verify steps are the game loop. |
+| [General Mission Analysis Tool (GMAT)](https://software.nasa.gov/software/GSC-19468-1) (NASA) | Reference for trans-lunar trajectory design. The game uses its own propagator (Earth and Moon gravity, see below), not GMAT. |
 | [Concept Maturity Levels](https://dataverse.jpl.nasa.gov/dataset.xhtml?persistentId=hdl:2014/44299) (NASA JPL) | The fly → read the report → redesign loop follows CML 1–4: idea, feasibility, trade space, point design. |
-| [Mission Design Lab](https://etd.gsfc.nasa.gov/capabilities/integrated-design-center/mission-design-lab/) (NASA GSFC) | The spacecraft disciplines an MDL study covers (power, structures, avionics, communications, attitude control, cost) are the subsystem categories in the workshop. |
+| [Mission Design Lab](https://etd.gsfc.nasa.gov/capabilities/integrated-design-center/mission-design-lab/) (NASA GSFC) | The spacecraft disciplines an MDL study covers (power, structures, avionics, communications, attitude control, cost) inspired the part categories in assembly (capsule, service module, life support, power, radiation shelter). |
 | [NASA Mission Viz](https://nasa.github.io/mission-viz/) | Model for showing the mission as a 3D scene with bodies, spacecraft and trajectory. |
-| [A Learning Game About Telescopes](https://science.nasa.gov/mission/webb/game-build-it-yourself/) (NASA Webb) | Model for letting the science objective constrain the instrument choices, with levels of increasing difficulty. |
-| [CubeSat 101](https://www3.nasa.gov/sites/default/files/atoms/files/nasa_csli_cubesat_101_508.pdf) (NASA CSLI) | Small-satellite classes and the rideshare launch model behind the Rideshare rocket option. |
+| [A Learning Game About Telescopes](https://science.nasa.gov/mission/webb/game-build-it-yourself/) (NASA Webb) | Model for a build-it-yourself learning game where the goal constrains the parts you can choose. |
 | [Visualize a Space Mission Using Virtual Reality](https://www.spaceappschallenge.org/2023/challenges/visualize-a-space-mission-using-virtual-reality/) (Space Apps 2023) | Mission concept, trajectory and timeline as the three things the flight view shows. |
 | [Digital Games and Activities](https://www.asc-csa.gc.ca/eng/youth-educators/digital-games-and-activities.asp) (CSA) | Reference for explaining space concepts to younger players. |
 
@@ -130,11 +124,11 @@ The mission engine computes trade-offs using standard orbital and spacecraft eng
 
 | Value | Formula / Method |
 | --- | --- |
-| Orbital period | Kepler's Third Law: $T = 2\pi \sqrt{a^3 / \mu}$ where $a = R_{\text{body}} + h$ |
-| Time in shadow (eclipse) | Cylindrical shadow geometry: $t_{\text{eclipse}} = T \cdot \frac{\arcsin(R_{\text{body}} / a)}{\pi}$ |
-| Ground resolution (GSD) | Altitude $\times$ instrument angular resolution: $\text{GSD} = h \cdot \theta$ |
-| Link budget & memory buffer | Net storage delta = $(\text{Data}_{\text{generated}} - \text{Downlink}_{\text{pass}}) \times \Delta t$ over NASA SCaN ground station passes |
-| Launch compatibility | Spacecraft total mass $\le$ launcher payload limit for the chosen orbit (`LEO`, `SSO`, `GEO`, `Lunar Polar`) |
+| Flight path | Numerical integration of Earth and Moon gravity, thrust, propellant flow from Isp and drag in an exponential atmosphere (`simulate.ts`, `orbit.ts`) |
+| Orbit in the HUD | Apoapsis, periapsis and period from the state vector (vis-viva, Kepler's Third Law $T = 2\pi \sqrt{a^3 / \mu}$) |
+| Launch compatibility | Spacecraft total mass $\le$ the rocket's payload to trans-lunar injection |
+| Life support | Days of consumables on board vs. the days the flight actually takes |
+| Solar storm dose | NOAA S-scale from the DONKI event's peak proton flux, whether the spacecraft is outside the magnetosphere, and whether the storm shelter is fitted |
 
 ### Regenerating NASA datasets (`data-prep/`)
 
@@ -150,10 +144,9 @@ The Artemis II path is built from NASA's ephemeris file, kept in `data-prep/raw/
 uv run data-prep/build_artemis2.py
 ```
 
-To optionally refresh the archived FIRMS or DONKI snapshots from live NASA endpoints (use your own free key from [api.nasa.gov](https://api.nasa.gov/); `DEMO_KEY` only allows 10 requests an hour and a DONKI refresh needs 5):
+To optionally refresh the archived DONKI snapshot from the live NASA endpoint (use your own free key from [api.nasa.gov](https://api.nasa.gov/); `DEMO_KEY` only allows 10 requests an hour and a DONKI refresh needs 5):
 
 ```bash
-FIRMS_MAP_KEY=your_key uv run data-prep/fetch_firms.py --live
 NASA_API_KEY=your_key uv run data-prep/fetch_donki.py --live
 ```
 
@@ -162,8 +155,9 @@ NASA_API_KEY=your_key uv run data-prep/fetch_donki.py --live
 ```text
 data-prep/               Python scripts to build and validate NASA JSON datasets
 public/
-  data/                  Archived NASA datasets (parts, rockets, stations, fires, storms, orbits, scenarios, explanations)
-    moon/                Lunar Ice Hunter constants, orbits, and LRO polar PSR targets
+  data/                  Archived datasets the game loads: crewed_lunar (parts, rockets, engines), storms (DONKI), artemis2_trajectory
+    moon/                LRO polar PSR ice targets (moon_targets.json)
+  textures/              NASA Blue Marble, Black Marble and LRO Moon maps
   models/                Blender exports (.glb)
 src/
   main.tsx               Entry point; loads Firebase after the game is on screen
@@ -258,5 +252,5 @@ In accordance with NASA Space Apps Challenge 2026 guidelines:
 | Planning | AI assistants helped structure the task breakdown and subsystem architecture. |
 | Code | AI coding assistants helped draft TypeScript types, Python data-prep scripts, and UI scaffolding; the team reviewed, validated, and tested all code. |
 | Writing | AI assisted with English proofreading and educational text formatting. |
-| Scientific data | Wildfire detections, solar storm records, planetary constants, and Orion/ESM/SLS/Falcon/Vulcan engine & stage figures (`crewed_lunar.json`) come from the cited NASA, ESA, NOAA, SpaceX, and ULA sources and were verified against them; ground station sites and bands follow NASA's Near Space Network list. Representative satellite bus parts (`parts.json`), placeholder constants in `src/core/`, and game-balance thresholds (Light/Medium TLI limits, cost caps, science values, safe-mode hours, per-pass capacity) are documented separately as team/AI-assisted design figures. |
+| Scientific data | Solar storm records, the Artemis II ephemeris, planetary constants, and Orion/ESM/SLS/Falcon/Vulcan engine & stage figures (`crewed_lunar.json`) come from the cited NASA, ESA, NOAA, SpaceX, and ULA sources and were verified against them. Placeholder constants in `src/core/`, and game-balance thresholds (Light/Medium TLI limits, cost caps, safe-mode hours) are documented separately as team/AI-assisted design figures. |
 | Branding | No NASA logos or insignia appear in any AI-generated assets. |
