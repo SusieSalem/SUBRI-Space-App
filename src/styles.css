@@ -979,10 +979,27 @@ button.primary.big {
   color: var(--text);
 }
 
-.flight-hud {
+/* The dock places the HUD and its collapse tab; the HUD itself scrolls inside it. */
+.hud-dock {
+  /* Flight bar: 16px from the bottom + 65px tall (one row, nowrap) + 16px gap. */
+  --hud-bottom-clear: 97px;
   position: absolute;
   top: 72px;
   right: 16px;
+  max-height: calc(100% - 72px - var(--hud-bottom-clear));
+  display: flex;
+  flex-direction: column;
+  pointer-events: none; /* the empty box must not block dragging the camera */
+}
+.hud-dock > * {
+  pointer-events: auto;
+}
+.flight-hud {
+  position: relative;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--faint) transparent;
   width: 320px;
   padding: 16px 18px;
   background: var(--glass-bg);
@@ -1012,6 +1029,108 @@ button.primary.big {
 }
 .hud-grid .value {
   font-size: 13px;
+  white-space: nowrap;
+}
+/* Clock always spans 2 columns (it grows to "T+12d 03:04:05" after day 1), paired with
+   Warp on the first row so the layout never jumps mid-mission. */
+.hud-grid > * {
+  order: 1;
+}
+.hud-grid > :first-child {
+  grid-column: span 2;
+  order: 0;
+}
+.hud-grid > :last-child {
+  order: 0;
+}
+
+/* Collapse tab: round glass button half outside the HUD's left edge. */
+.hud-tab {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-highlight), var(--glass-shadow);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  transition: left 0.25s ease, background 0.15s, border-color 0.15s;
+}
+.hud-tab:hover:not(:disabled) {
+  background: rgba(10, 14, 22, 0.75);
+}
+.hud-tab svg {
+  transition: transform 0.25s ease;
+}
+.flight-hud {
+  transition: transform 0.25s ease, opacity 0.25s ease, visibility 0s linear 0s;
+}
+/* Collapsed: the HUD slides off to the right; the tab parks at the screen edge. */
+.hud-dock.collapsed .flight-hud {
+  transform: translateX(calc(100% + 16px));
+  opacity: 0;
+  visibility: hidden;
+  transition: transform 0.25s ease, opacity 0.25s ease, visibility 0s linear 0.25s;
+}
+.hud-dock.collapsed .hud-tab {
+  /* dock width + right gutter (16) - half the tab (14) - 8px from the screen edge */
+  left: calc(100% + 16px - 14px - 8px);
+}
+.hud-dock.collapsed .hud-tab svg {
+  transform: rotate(180deg);
+}
+/* Scroll hint: the bottom of the HUD fades out while there is more to scroll.
+   A mask also clips the element's outer shadow, so the drop shadow lives on the dock. */
+.hud-dock {
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow);
+  transition: box-shadow 0.25s ease;
+}
+.hud-dock.collapsed {
+  box-shadow: none;
+}
+.flight-hud {
+  box-shadow: var(--glass-highlight);
+}
+@property --hud-fade {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+/* Scroll-driven: the timeline is inactive when nothing overflows (no fade), and the fade
+   shrinks to 0 at the end of the scroll. Browsers without support simply show no fade. */
+@supports (animation-timeline: scroll()) {
+  .flight-hud {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--hud-fade)), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--hud-fade)), transparent);
+    animation: hud-scroll-fade linear both;
+    animation-timeline: scroll(self);
+  }
+}
+@keyframes hud-scroll-fade {
+  0%,
+  90% {
+    --hud-fade: 40px;
+  }
+  100% {
+    --hud-fade: 0px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flight-hud,
+  .hud-dock.collapsed .flight-hud,
+  .hud-tab,
+  .hud-tab svg {
+    transition: none;
+  }
 }
 
 .fade {

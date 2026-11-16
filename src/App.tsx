@@ -34,7 +34,7 @@ import { TutorialOverlay } from "./components/TutorialOverlay";
 import { ControlsHelp } from "./components/ControlsHelp";
 import { SettingsMenu } from "./components/SettingsMenu";
 import { WarpControl as WarpStepper } from "./components/WarpControl";
-import { ArrowLeftIcon, EarthIcon, MapIcon, MoonIcon, PauseIcon, PlayIcon } from "./components/icons";
+import { ArrowLeftIcon, ChevronRightIcon, EarthIcon, MapIcon, MoonIcon, PauseIcon, PlayIcon } from "./components/icons";
 import type { Quality, Telemetry, WarpControl, WeatherState } from "./scenes/FlightScene";
 
 // The 3D scene and the planner are the heavy parts: load them as separate
@@ -142,6 +142,7 @@ export default function App() {
   const keys = useRef(new Set<string>());
   const [simVersion, setSimVersion] = useState(0);
   const [lookAt, setLookAt] = useState<{ body: "earth" | "moon"; n: number } | null>(null);
+  const [hudCollapsed, setHudCollapsed] = useState(false);
   const look = (body: "earth" | "moon") => setLookAt((l) => ({ body, n: (l?.n ?? 0) + 1 }));
 
   const t = useMemo(() => totals(parts), [parts]);
@@ -500,7 +501,22 @@ export default function App() {
 
       {mode === "flight" && tel && (
         <>
-          <aside className="flight-hud">
+          <div className={`hud-dock ${hudCollapsed ? "collapsed" : ""}`}>
+          <button
+            type="button"
+            className="hud-tab"
+            aria-expanded={!hudCollapsed}
+            aria-controls="flight-hud"
+            aria-label={hudCollapsed ? "Show telemetry" : "Hide telemetry"}
+            title={hudCollapsed ? "Show telemetry" : "Hide telemetry"}
+            onClick={() => {
+              playClick();
+              setHudCollapsed((c) => !c);
+            }}
+          >
+            <ChevronRightIcon />
+          </button>
+          <aside className="flight-hud" id="flight-hud">
             <div className="hud-row">
               <span className="label">Phase</span>
               <span className={`value ${tel.failed ? "bad" : tel.done ? "ok" : ""}`}>{tel.phase}</span>
@@ -550,6 +566,7 @@ export default function App() {
                 : "Trajectory chosen by the autopilot"}
             </span>
           </aside>
+          </div>
 
           <footer className="controls">
             <div className="buttons">
