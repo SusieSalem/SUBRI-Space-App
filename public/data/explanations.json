@@ -2,58 +2,76 @@
   "dataset": "Mission Architect In-Game Educational Guide & 30s Demo Storyboard",
   "explanations": [
     {
-      "id": "orbital_period",
-      "term": "Orbital Period (Kepler's Third Law)",
-      "shortExplanation": "Higher orbits travel slower over a longer circle, so each lap takes much longer: ~92 minutes at 400 km LEO versus 23 h 56 m at 35,786 km GEO.",
-      "tradeOffTip": "Pick LEO/SSO for frequent passes over wildfires, or GEO if you want to match Earth's spin and stare at one continent permanently.",
-      "formula": "T = 2 * pi * sqrt(a^3 / mu)",
-      "sourceLabel": "NASA Earth Observatory — Catalog of Orbits",
-      "sourceUrl": "https://earthobservatory.nasa.gov/features/OrbitsCatalog"
-    },
-    {
-      "id": "eclipse_battery",
-      "term": "Eclipse Shadow & Battery Capacity",
-      "shortExplanation": "Whenever Earth or the Moon blocks the Sun, solar panels drop to 0 W and your battery must power the entire spacecraft until sunrise.",
-      "tradeOffTip": "A 40 Wh battery survives short low-power orbits, whereas power-hungry X-band radios or 69-minute GEO equinox shadows require the 120 Wh pack.",
-      "formula": "E_eclipse(Wh) = P_load(W) * (t_eclipse(min) / 60)",
-      "sourceLabel": "NASA Ames SmallSat SOA — Power & Energy Storage",
-      "sourceUrl": "https://www.nasa.gov/smallsat-institute/sst-soa/power/"
-    },
-    {
-      "id": "ground_resolution",
-      "term": "Ground Resolution",
-      "shortExplanation": "The smallest feature your camera can distinguish on the ground equals your orbit altitude multiplied by the sensor's angular resolution.",
-      "tradeOffTip": "Moving 50x higher to GEO makes a standard LEO camera 50x blurrier (~27 km pixels)—you need the Wide-Field GEO Telescope to keep pixels under 1 km.",
-      "formula": "GSD(km) = altitude(km) * angularRes(rad)",
-      "sourceLabel": "NASA FIRMS — Spatial Resolution of MODIS vs VIIRS",
-      "sourceUrl": "https://www.earthdata.nasa.gov/data/tools/firms/faq"
-    },
-    {
-      "id": "data_downlink",
-      "term": "Data Rate vs. Memory Bottleneck",
-      "shortExplanation": "Cameras continuously write GB of imagery to onboard flash memory, which can only empty while flying within line-of-sight of a NASA ground station.",
-      "tradeOffTip": "If your camera creates 24–32 GB/day and an S-band antenna only sends 12 GB/day, memory hits 100% and new wildfire alerts are dropped—upgrade to X-band!",
-      "formula": "Net_Buffer = (Data_Gen - Downlink_Cap) * days",
-      "sourceLabel": "NASA SCaN — Near Space Network Ground Stations",
-      "sourceUrl": "https://www.nasa.gov/technology/space-comms/near-space-network-complexes/"
-    },
-    {
       "id": "launch_envelope",
-      "term": "Launch Vehicle Payload & Orbit Compatibility",
-      "shortExplanation": "Reaching Geostationary or Lunar orbit takes far more rocket delta-v than LEO, drastically shrinking how much mass a launcher can lift—or blocking small rockets altogether.",
-      "tradeOffTip": "Lighter buses let you ride Small ($8M) or Rideshare ($6M/100kg) rockets in LEO/SSO, freeing budget for better sensors.",
-      "formula": "Fits = (Mass_total <= Rocket_Max(orbit)) and (Orbit_Supported)",
-      "sourceLabel": "NASA Launch Services Program (LSP)",
-      "sourceUrl": "https://elvperf.ksc.nasa.gov/"
+      "term": "Rocket Payload to the Moon",
+      "shortExplanation": "A rocket can push far less mass to the Moon than to low Earth orbit: the trans-lunar injection burn needs about 3.1 km/s more after orbit. SLS Block 1 sends over 27 t to the Moon, a Falcon 9-class rocket only a few tonnes.",
+      "tradeOffTip": "Every part you add has to fit under the rocket's Moon payload. If the stack is too heavy, drop a part you do not need or pay for a bigger rocket.",
+      "formula": "Fits = m_spacecraft <= payload_TLI(rocket)",
+      "sourceLabel": "NASA — Space Launch System Core Stage",
+      "sourceUrl": "https://www.nasa.gov/reference/space-launch-system-core-stage/"
+    },
+    {
+      "id": "staging",
+      "term": "Staging",
+      "shortExplanation": "A rocket throws away empty tanks and engines as it climbs, so the next stage only pushes what is still useful. That is why every real Moon rocket has two or more stages plus boosters.",
+      "tradeOffTip": "If a stage runs dry before orbit, the vehicle is too heavy for that rocket: lighten the spacecraft or pick the bigger rocket.",
+      "formula": "dv_total = sum over stages of Isp_i * g0 * ln(m0_i / mf_i)",
+      "sourceLabel": "NASA Glenn Research Center — Booster Staging",
+      "sourceUrl": "https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/stage/"
+    },
+    {
+      "id": "rocket_equation",
+      "term": "Delta-v and the Rocket Equation",
+      "shortExplanation": "Delta-v is how much a spacecraft can change its speed with the propellant it carries. It grows only with the logarithm of the mass ratio, so extra fuel buys less and less.",
+      "tradeOffTip": "Course corrections and the trip home come out of the service module's delta-v. A larger service module gives margin, but it is heavier for the rocket.",
+      "formula": "dv = Isp * g0 * ln(m_full / m_empty)",
+      "sourceLabel": "NASA Glenn Research Center — Ideal Rocket Equation",
+      "sourceUrl": "https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/ideal-rocket-equation/"
+    },
+    {
+      "id": "free_return",
+      "term": "Trans-Lunar Injection and Free Return",
+      "shortExplanation": "From the parking orbit, one burn (trans-lunar injection) raises the far point of the orbit to the Moon's distance. Timed right, the Moon's gravity swings the spacecraft round its far side and back to Earth without another big burn, as on Artemis II.",
+      "tradeOffTip": "Burn too early or too late and the Moon is not there when you arrive. Fire when the Moon is the right angle ahead, and keep propellant for the small corrections.",
+      "formula": "v_TLI = sqrt(mu * (2/r - 1/a)), a = (r + d_Moon) / 2",
+      "sourceLabel": "NASA — Artemis II Press Kit",
+      "sourceUrl": "https://www.nasa.gov/artemis-ii-press-kit/"
+    },
+    {
+      "id": "life_support",
+      "term": "Life Support Consumables",
+      "shortExplanation": "The crew needs oxygen, water and carbon dioxide removal for every day of the flight. The life support system carries a fixed number of days; a slower trip uses them up.",
+      "tradeOffTip": "Plan for the days the flight really takes, plus a margin for a late return, not just the nominal mission length.",
+      "formula": "Safe = days_on_board >= days_of_flight",
+      "sourceLabel": "NASA — Environmental Control and Life Support Systems (ECLSS)",
+      "sourceUrl": "https://www.nasa.gov/reference/environmental-control-and-life-support-systems-eclss/"
+    },
+    {
+      "id": "reentry",
+      "term": "Re-entry and the Heat Shield",
+      "shortExplanation": "Coming back from the Moon the capsule hits the air at about 11 km/s, much faster than from low orbit (about 7.8 km/s). The heat shield takes the heat and the angle of entry sets how hard the crew is pressed into their seats.",
+      "tradeOffTip": "Too steep and the g-load and heating are dangerous; too shallow and the capsule skips off the atmosphere. Course corrections on the way home aim for the narrow corridor.",
+      "formula": "Energy per kg = v^2 / 2  (about 60 MJ/kg at 11 km/s)",
+      "sourceLabel": "NASA — Orion Spacecraft",
+      "sourceUrl": "https://www.nasa.gov/humans-in-space/orion-spacecraft/"
     },
     {
       "id": "space_weather",
-      "term": "Solar Storms & Safe Mode (NASA DONKI)",
-      "shortExplanation": "Coronal Mass Ejections (CMEs) and Solar Energetic Particles (SEPs) increase radiation upsets and heat Earth's upper atmosphere, raising drag in LEO.",
-      "tradeOffTip": "Radiation-hardened computers and medium bus shielding reduce failure risk during intense storms like the May 2024 Gannon G5 event.",
-      "formula": "P_fail = 1 - reliability * (1 - storm_unshielded_risk)",
+      "term": "Solar Storms (NASA DONKI)",
+      "shortExplanation": "Solar flares and coronal mass ejections can send bursts of energetic protons. Near Earth the magnetic field deflects them; on the way to the Moon nothing does.",
+      "tradeOffTip": "The events in the game are real ones from NASA's DONKI database. The dangerous ones are the proton events (NOAA S-scale), not only a high Kp.",
+      "formula": "S = floor(log10(proton flux in pfu)), from 10 pfu (S1)",
       "sourceLabel": "NASA CCMC DONKI Space Weather Database",
       "sourceUrl": "https://ccmc.gsfc.nasa.gov/tools/DONKI/"
+    },
+    {
+      "id": "radiation_shelter",
+      "term": "Radiation Storm Shelter",
+      "shortExplanation": "Orion has no heavy shielding everywhere, so during a solar particle event the crew builds a dense shelter with the stowage bags on board and waits inside.",
+      "tradeOffTip": "Fit the radiation shelter for deep space flights. Without it, a strong storm outside the magnetosphere gives the crew a dangerous dose.",
+      "formula": "Safe = inside magnetosphere OR flux < 10 pfu OR shelter fitted",
+      "sourceLabel": "NASA — Orion Radiation Protection Plan",
+      "sourceUrl": "https://www.nasa.gov/missions/artemis/orion/scientists-and-engineers-evaluate-orion-radiation-protection-plan/"
     }
   ],
   "videoStoryboard30s": [
