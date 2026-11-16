@@ -41,7 +41,7 @@ const EARTH_STEPS: TutorialStep[] = [
   {
     id: "welcome",
     title: "Welcome to Mission Architect",
-    text: "I'm your Earth launch assistant. Before liftoff, let's take a quick look at the controls that shape your rocket's performance and launch conditions.",
+    text: "Hi! I'm your Earth launch assistant. Before liftoff, let's take a quick look together at the controls that shape your rocket.",
     targetSelector: null,
     placement: "center",
     emotion: "happy",
@@ -50,7 +50,7 @@ const EARTH_STEPS: TutorialStep[] = [
   {
     id: "parts",
     title: "Spacecraft Parts",
-    text: "Choose your Crew Module, Heat Shield, and Avionics. Each part changes total mass, crew capacity, and how well your ship survives reentry and orbital flight.",
+    text: "Starting here on the left, choose your Crew Module, Heat Shield, and Avionics. Each part changes your mass and how well you survive reentry.",
     targetSelector: ".panel.left",
     placement: "right",
     voiceClip: "/audio/voice/earth_ai/earth_parts.mp3",
@@ -58,7 +58,7 @@ const EARTH_STEPS: TutorialStep[] = [
   {
     id: "rocket",
     title: "Launch Vehicle",
-    text: "Pick a rocket booster. Heavy rockets lift more payload mass into orbit, while lighter rockets cost less thrust margin if your spacecraft stays light.",
+    text: "Right below your parts, pick a rocket booster. Heavy rockets lift more payload, while lighter ones need a lighter spacecraft.",
     targetSelector: ".rockets",
     placement: "right",
     voiceClip: "/audio/voice/earth_ai/earth_rocket.mp3",
@@ -66,7 +66,7 @@ const EARTH_STEPS: TutorialStep[] = [
   {
     id: "readiness",
     title: "Readiness Gauges",
-    text: "These bars check your mass budget, delta-v, crew, and safety systems. Every item must turn green before flight clearance is granted.",
+    text: "Moving over to the right side, keep an eye on these readiness gauges. Every bar needs to turn green before you can launch.",
     targetSelector: ".panel.right.assembly",
     placement: "left",
     voiceClip: "/audio/voice/earth_ai/earth_readiness.mp3",
@@ -74,7 +74,7 @@ const EARTH_STEPS: TutorialStep[] = [
   {
     id: "environment",
     title: "Weather, Time & Settings",
-    text: "Open the gear menu to set launch weather (Clear, Cloudy, Rain, or Storm), date, time of day, audio, and graphics quality.",
+    text: "Now down at the bottom, open the gear menu anytime to change launch weather, time of day, audio, and graphics quality.",
     targetSelector: ".controls .popover-anchor",
     placement: "top",
     voiceClip: "/audio/voice/earth_ai/earth_settings.mp3",
@@ -82,7 +82,7 @@ const EARTH_STEPS: TutorialStep[] = [
   {
     id: "launch",
     title: "Ready for Liftoff",
-    text: "Once all readiness checks are green, hit Plan the orbit or Launch with autopilot plan to begin your mission!",
+    text: "And finally, once everything is green, hit Plan the orbit or launch right away!",
     targetSelector: ".controls .primary.big",
     placement: "top",
     emotion: "happy",
@@ -94,7 +94,7 @@ const PLANNING_STEPS: TutorialStep[] = [
   {
     id: "plan-welcome",
     title: "Step 2: Orbit Planner",
-    text: "Welcome to Mission Control! Here you aim your Trans-Lunar Injection (TLI) burn so your crew flies around the Moon and returns safely home.",
+    text: "Next stop, Mission Control! Let's aim your burn so the crew loops around the Moon and comes safely back home.",
     targetSelector: null,
     placement: "center",
     emotion: "happy",
@@ -124,7 +124,7 @@ const PLANNING_STEPS: TutorialStep[] = [
   {
     id: "plan-launch",
     title: "Launch This Plan",
-    text: "When your free return looks good, click 'Launch this plan' to head to the pad and fly it!",
+    text: "Alright, your free return looks solid! Whenever you're ready, hit Launch this plan and let's go to space!",
     targetSelector: ".controls .primary.big",
     placement: "top",
     emotion: "happy",
@@ -805,7 +805,7 @@ export function TutorialOverlay({
           triggerAutoNotice({
             tag: "Pad Check",
             title: "Stormy Skies Overhead",
-            text: "Lightning is flashing near the pad! You can switch weather anytime in the bottom bar.",
+            text: "Just a heads up—heavy storm clouds and lightning just rolled over the pad. Launch conditions look pretty risky right now.",
             emotion: "sad",
             voiceClip: "/audio/voice/earth_ai/earth_storm.mp3",
           });
@@ -813,7 +813,7 @@ export function TutorialOverlay({
           triggerAutoNotice({
             tag: "Ready!",
             title: "Rocket Looking Great",
-            text: "All launch gauges are green! Hit Plan the orbit whenever you're ready to fly.",
+            text: "Oh, look at those gauges—all systems green! You're officially cleared to plan your orbit and launch!",
             emotion: "happy",
             voiceClip: "/audio/voice/earth_ai/earth_cleared.mp3",
           });
@@ -859,7 +859,7 @@ export function TutorialOverlay({
       triggerAutoNotice({
         tag: "Cleared!",
         title: "Ready for Launch",
-        text: "Every gauge is green! Hit Plan the orbit or Launch with autopilot plan whenever you're ready.",
+        text: "Oh, look at those gauges—all systems green! You're officially cleared to plan your orbit and launch!",
         emotion: "happy",
         voiceClip: "/audio/voice/earth_ai/earth_cleared.mp3",
       });
@@ -880,7 +880,7 @@ export function TutorialOverlay({
       triggerAutoNotice({
         tag: "Weather Alert",
         title: "Storm at the Launch Pad",
-        text: "Heavy storm clouds and lightning are active at the pad — launch conditions may be hazardous!",
+        text: "Just a heads up—heavy storm clouds and lightning just rolled over the pad. Launch conditions look pretty risky right now.",
         emotion: "sad",
         voiceClip: "/audio/voice/earth_ai/earth_storm.mp3",
       });
@@ -907,7 +907,7 @@ export function TutorialOverlay({
       triggerOnce("failed", {
         tag: "Alert",
         title: "Mission Failed",
-        text: telemetry.message || "Something went wrong on this flight. Review telemetry and try another run.",
+        text: "Aww, mission lost... Something went wrong on that run. Don't worry though, let's review telemetry and try again.",
         emotion: "sad",
         voiceClip: "/audio/voice/space_ai/space_failed_sad.mp3",
       });
@@ -915,7 +915,7 @@ export function TutorialOverlay({
       triggerOnce("stormExposed", {
         tag: "Radiation Alert",
         title: "Crew Exposed to Storm",
-        text: "The solar storm hit without a Radiation Storm Shelter. Add shielding in Assembly next time!",
+        text: "Hold on... the solar storm hit and the crew wasn't shielded. Remember to pack a Radiation Storm Shelter next time so they stay safe.",
         emotion: "sad",
         voiceClip: "/audio/voice/space_ai/space_radiation_sad.mp3",
       });
@@ -923,7 +923,7 @@ export function TutorialOverlay({
       triggerOnce("done", {
         tag: "Milestone",
         title: "Mission Complete!",
-        text: "Welcome home, commander! Splashdown achieved — outstanding flight.",
+        text: "And all the way back home safe—welcome back, commander! That was an awesome flight!",
         emotion: "happy",
         voiceClip: "/audio/voice/space_ai/space_complete.mp3",
       });
@@ -931,7 +931,7 @@ export function TutorialOverlay({
       triggerOnce("moon", {
         tag: "Milestone",
         title: "Lunar Approach!",
-        text: "You've reached the Moon's neighborhood! Watch your periapsis in Map View (M).",
+        text: "Look ahead from orbit—we're finally in the Moon's neighborhood! Keep a close eye on your periapsis as we swing by.",
         emotion: "happy",
         voiceClip: "/audio/voice/space_ai/space_moon.mp3",
       });
@@ -943,7 +943,7 @@ export function TutorialOverlay({
       triggerOnce("orbit", {
         tag: "Milestone",
         title: "Orbit Achieved!",
-        text: "You're in stable orbit — falling around Earth at orbital velocity!",
+        text: "Building on that climb—orbit achieved! Right now we're basically falling around Earth without ever hitting it!",
         emotion: "happy",
         voiceClip: "/audio/voice/space_ai/space_orbit.mp3",
       });
@@ -951,7 +951,7 @@ export function TutorialOverlay({
       triggerOnce("karman", {
         tag: "Milestone",
         title: "Karman Line Crossed!",
-        text: "100 km altitude reached — welcome to outer space!",
+        text: "We made it off the pad and just crossed the Karman line, 100 kilometers up! Welcome to outer space!",
         emotion: "happy",
         voiceClip: "/audio/voice/space_ai/space_karman.mp3",
       });
@@ -1349,7 +1349,14 @@ export function TutorialOverlay({
         })}
       </div>
       {triviaPick !== null && (
-        <div className="tutorial-live-note">{currentTrivia.explanation}</div>
+        <div className="tutorial-live-note">
+          <strong>
+            {triviaPick === currentTrivia.correctIndex
+              ? "Nice! You nailed it! "
+              : "Ooh, not quite that one, good try though! "}
+          </strong>
+          {currentTrivia.explanation}
+        </div>
       )}
       <div className="tutorial-actions">
         <button type="button" className="tutorial-btn ghost" onClick={onHide}>
@@ -1551,7 +1558,7 @@ export function TutorialOverlay({
                 <p className="tutorial-text">
                   {persona === "planning"
                     ? "Repeat the Orbit Planner walkthrough, check your rocket readiness, or play Space Trivia."
-                    : "Want to repeat the guided tutorial, inspect your rocket build, or test your space knowledge?"}
+                    : "Hey, welcome back! Need a hand on the pad? We can repeat the tour, check your rocket, or play some trivia."}
                 </p>
                 <div className="tutorial-menu-grid">
                   <button

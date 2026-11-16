@@ -2,7 +2,8 @@
 // with what to change, the key numbers and "What you learned" with NASA sources.
 // All the logic is in src/core/missionReport.ts; this only lays it out.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { playAiVoice, stopAiVoice } from "../audio/soundManager";
 import { explanationsFor } from "../core/explanations";
 import type { Finding, MissionReport as Report } from "../core/missionReport";
 import type { EducationalExplanation } from "../types/mission";
@@ -26,8 +27,25 @@ interface Props {
 
 export function MissionReport({ report, onRedesign, onEditPlan, onFlyAgain }: Props) {
   const [open, setOpen] = useState(true);
+  const [playingId, setPlayingId] = useState<string | null>(null);
   const s = report.stats;
   const others = report.findings.filter((f) => f !== report.rootCause);
+
+  useEffect(() => {
+    return () => stopAiVoice();
+  }, []);
+
+  const toggleAudio = (id: string) => {
+    if (playingId === id) {
+      stopAiVoice();
+      setPlayingId(null);
+      return;
+    }
+    setPlayingId(id);
+    playAiVoice(`/audio/voice/explanations/${id}.mp3`, () => {
+      setPlayingId((cur) => (cur === id ? null : cur));
+    });
+  };
 
   if (!open)
     return (
@@ -50,7 +68,11 @@ export function MissionReport({ report, onRedesign, onEditPlan, onFlyAgain }: Pr
             className="ghost report-close"
             aria-label="Close the report"
             title="Close and look at the scene"
-            onClick={() => setOpen(false)}
+            onClick={() => {
+              stopAiVoice();
+              setPlayingId(null);
+              setOpen(false);
+            }}
           >
             ×
           </button>
@@ -90,20 +112,48 @@ export function MissionReport({ report, onRedesign, onEditPlan, onFlyAgain }: Pr
             <h3>What you learned</h3>
             <div className="report-learned">
               {report.learned.map((e) => (
-                <Explanation key={e.id} e={e} />
+                <Explanation
+                  key={e.id}
+                  e={e}
+                  playing={playingId === e.id}
+                  onToggleAudio={() => toggleAudio(e.id)}
+                />
               ))}
             </div>
           </div>
         )}
 
         <footer className="report-actions">
-          <button type="button" className="primary" onClick={onRedesign}>
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              stopAiVoice();
+              setPlayingId(null);
+              onRedesign();
+            }}
+          >
             Redesign the spacecraft
           </button>
-          <button type="button" onClick={onEditPlan}>
+          <button
+            type="button"
+            onClick={() => {
+              stopAiVoice();
+              setPlayingId(null);
+              onEditPlan();
+            }}
+          >
             Change the orbit plan
           </button>
-          <button type="button" className="ghost" onClick={onFlyAgain}>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              stopAiVoice();
+              setPlayingId(null);
+              onFlyAgain();
+            }}
+          >
             Fly again
           </button>
         </footer>
@@ -133,10 +183,29 @@ function FindingItem({ f, root = false }: { f: Finding; root?: boolean }) {
   );
 }
 
-function Explanation({ e }: { e: EducationalExplanation }) {
+function Explanation({
+  e,
+  playing,
+  onToggleAudio,
+}: {
+  e: EducationalExplanation;
+  playing: boolean;
+  onToggleAudio: () => void;
+}) {
   return (
     <article className="report-explanation">
-      <span className="finding-title">{e.term}</span>
+      <div className="explanation-head">
+        <span className="finding-title">{e.term}</span>
+        <button
+          type="button"
+          className={`explanation-listen ${playing ? "playing" : ""}`}
+          onClick={onToggleAudio}
+          aria-pressed={playing}
+          title={playing ? "Stop voice explanation" : "Listen to voice explanation"}
+        >
+          {playing ? "Stop" : "Listen"}
+        </button>
+      </div>
       <span className="small">{e.shortExplanation}</span>
       <span className="small finding-fix">Tip: {e.tradeOffTip}</span>
       <code className="report-formula">{e.formula}</code>

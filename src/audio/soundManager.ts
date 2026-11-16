@@ -428,9 +428,12 @@ class SoundManager {
     }
   }
 
-  public playAiVoice(url: string): void {
+  public playAiVoice(url: string, onEnded?: () => void): void {
     this.stopAiVoice();
-    if (this.muted || !this.voiceEnabled || this.tabHidden || typeof window === "undefined") return;
+    if (this.muted || !this.voiceEnabled || this.tabHidden || typeof window === "undefined") {
+      onEnded?.();
+      return;
+    }
     try {
       const audio = new Audio(url);
       audio.volume = Math.min(1, Math.max(0.05, this.volume * 0.95));
@@ -439,6 +442,7 @@ class SoundManager {
         if (this.activeAiAudio === audio) {
           this.activeAiAudio = null;
         }
+        onEnded?.();
       });
       const p = audio.play();
       if (p && typeof p.catch === "function") {
@@ -447,10 +451,11 @@ class SoundManager {
             this.activeAiAudio = null;
             this.pendingAiUrl = url;
           }
+          onEnded?.();
         });
       }
     } catch {
-      // Ignore playback errors
+      onEnded?.();
     }
   }
 
@@ -1415,7 +1420,7 @@ export const subscribeMute = (listener: MuteListener) => soundManager.subscribe(
 export const subscribeAudioSettings = (listener: SettingsListener) =>
   soundManager.subscribeSettings(listener);
 export const speakCallout = (text: string) => soundManager.speakCallout(text);
-export const playAiVoice = (url: string) => soundManager.playAiVoice(url);
+export const playAiVoice = (url: string, onEnded?: () => void) => soundManager.playAiVoice(url, onEnded);
 export const stopAiVoice = () => soundManager.stopAiVoice();
 export const playClick = () => soundManager.playClick();
 export const playPartSnap = (added?: boolean) => soundManager.playPartSnap(added);
