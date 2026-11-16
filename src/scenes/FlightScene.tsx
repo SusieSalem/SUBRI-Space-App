@@ -39,9 +39,13 @@ import { COUNTDOWN_S, FlightSim, MOUNT_HEIGHT, PAD_ECEF, PHASE_LABEL, type Piece
 import {
   playAlert,
   playCountdownBeep,
-  playLaunchRumbling,
   playMissionResult,
+  playParachuteDeploy,
   playPartSnap,
+  playSpaceTelemetryCue,
+  playThunderStrike,
+  stopFlightAudio,
+  updateFlightAudio,
 } from "../audio/soundManager";
 import Astronaut from "./Astronaut";
 import LaunchSite from "./LaunchSite";
@@ -145,6 +149,21 @@ function attitudeQuaternion(att: Vec3, out: THREE.Quaternion) {
 
 const sub = (a: Vec3, b: Vec3) => new THREE.Vector3(a.x - b.x, a.y - b.y, a.z - b.z);
 
+/** Matches GLSL fract() and hash11() in src/scenes/shaders/planet.ts so thunder aligns with lightning bolts. */
+function shaderFract(x: number): number {
+  return x - Math.floor(x);
+}
+function shaderHash11(p: number): number {
+  let x = shaderFract(p * 0.1031);
+  let y = x;
+  let z = x;
+  const d = x * (y + 19.19) + y * (z + 19.19) + z * (x + 19.19);
+  x += d;
+  y += d;
+  z += d;
+  return shaderFract((x + y) * z);
+}
+
 /* ------------------------------------------------------------- the world */
 
 interface Debris {
@@ -172,7 +191,8 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
   const debris = useRef<Partial<Record<PieceId | "serviceModule", Debris>>>({});
   const eventIndex = useRef(0);
   const sounds = useRef(new Set<string>());
-  const stopRumble = useRef<(() => void) | null>(null);
+  const thunderStrikes = useRef(new Set<string>());
+  const lastPhaseSound = useRef<string>("prelaunch");
   const lastReport = useRef(0);
   const lastPredict = useRef(0);
   const prevTarget = useRef(new THREE.Vector3());
@@ -293,6 +313,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     debris.current = {};
     eventIndex.current = 0;
     sounds.current.clear();
+    lastPhaseSound.current = "prelaunch";
     setFlags({ deployed: false, capsuleOnly: false, serviceBurning: false, heat: 0 });
     if (smDebrisRef.current) smDebrisRef.current.visible = false;
     if (controls) {
@@ -302,8 +323,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
       controls.update();
     }
     return () => {
-      stopRumble.current?.();
-      stopRumble.current = null;
+      stopFlightAudio();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version, controls]);
@@ -349,7 +369,7 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     }
     const t = sim.t;
 
-    // Sounds: countdown beeps, engine rumble, and mission outcome.
+    // Discrete flight sounds: countdown pips, space phase telemetry cues, chutes, and mission outcome.
     if (flying) {
       for (let s = 5; s >= 0; s--) {
         const key = `beep${s}`;
@@ -358,18 +378,33 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
           playCountdownBeep(s === 0);
         }
       }
-      if (t >= COUNTDOWN_S - 3 && !sounds.current.has("rumble")) {
-        sounds.current.add("rumble");
-        stopRumble.current = playLaunchRumbling(20);
+      if (sim.phase !== lastPhaseSound.current) {
+        const prev = lastPhaseSound.current;
+        lastPhaseSound.current = sim.phase;
+        if (sim.phase === "parking" || sim.phase === "transit") {
+          playSpaceTelemetryCue("coast");
+        } else if (sim.phase === "tli" || sim.phase === "tcm") {
+          playSpaceTelemetryCue("burn_start");
+        } else if (sim.phase === "return" && prev !== "return") {
+          playSpaceTelemetryCue("lunar_flyby");
+        } else if (sim.phase === "entry") {
+          playSpaceTelemetryCue("entry");
+        } else if (sim.phase === "parachutes") {
+          playParachuteDeploy();
+        }
+      }
+      if (sim.moonDistance < 65000000 && !sounds.current.has("lunarEncounter")) {
+        sounds.current.add("lunarEncounter");
+        playSpaceTelemetryCue("lunar_flyby");
       }
       if (sim.phase === "splashdown" && !sounds.current.has("missionDone")) {
         sounds.current.add("missionDone");
-        stopRumble.current?.();
+        stopFlightAudio();
         playMissionResult(true, 3);
       }
       if (sim.phase === "failed" && !sounds.current.has("missionFailed")) {
         sounds.current.add("missionFailed");
-        stopRumble.current?.();
+        stopFlightAudio();
         playAlert("failure");
         playMissionResult(false, 1);
       }
@@ -650,9 +685,52 @@ function World({ version, simRef, rocket, parts, flying, warp, keys, mapView, qu
     // Cloud time combines real-time ambient drift (even on the pad), mission time (when syncCycle is on),
     // and time-of-day scrubbing so moving the slider forward/backward visibly moves the clouds!
     const cloudTime = (syncCycle ? t : 0) + state.clock.elapsedTime * 6.5 + (timeOfDay - 9.0) * 180.0;
+    const realTimeVal = state.clock.elapsedTime + (timeOfDay - 9.0) * 12.0;
     u.uTime.value = cloudTime;
-    u.uRealTime.value = state.clock.elapsedTime + (timeOfDay - 9.0) * 12.0;
+    u.uRealTime.value = realTimeVal;
     u.uWeather.value = WEATHER_VALUE[weather];
+
+    // Continuous flight audio (atmospheric rocket, Stage 2 vacuum burn, Service Module TLI/TCM,
+    // re-entry plasma, deep-space cabin hum, and pad rain/storm wind).
+    const camAltM = camR - R_EARTH;
+    const isFlightActive = !w.paused && sim.phase !== "splashdown" && sim.phase !== "failed";
+    updateFlightAudio({
+      active: isFlightActive,
+      flying,
+      prelaunchIgnition: flying && t >= COUNTDOWN_S - 3 && t < COUNTDOWN_S,
+      burningBoostersOrS1: sim.burning.boosters || sim.burning.stage1,
+      burningS2: sim.burning.stage2,
+      burningService: sim.burning.service,
+      throttle: sim.throttle,
+      altitudeM: sim.altitude,
+      cameraAltitudeM: camAltM,
+      heat: sim.heat,
+      weather,
+    });
+
+    // Synchronized thunder strikes matching the 3 procedural lightning bolt slots in planet.ts
+    if (weather === "storm" && camAltM < 35000) {
+      const atten = Math.max(0.25, 1 - Math.max(0, camAltM) / 35000);
+      for (let i = 0; i < 3; i++) {
+        const shift = shaderFract((i + 1) * 0.3333);
+        const boltTime = realTimeVal * 1.35 + shift;
+        const tSeries = Math.floor(boltTime) + 1.0;
+        const ft = shaderFract(boltTime);
+        // Bolt hits the ground/sea around ft = 0.48 (descentDuration in planet.ts)
+        if (shaderHash11(i + tSeries * 0.026) <= 0.44 && ft >= 0.42 && ft <= 0.65) {
+          const strikeKey = `${i}_${tSeries}`;
+          if (!thunderStrikes.current.has(strikeKey)) {
+            thunderStrikes.current.add(strikeKey);
+            if (thunderStrikes.current.size > 60) {
+              const oldest = thunderStrikes.current.values().next().value;
+              if (oldest !== undefined) thunderStrikes.current.delete(oldest);
+            }
+            playThunderStrike(0.85 * atten);
+          }
+        }
+      }
+    }
+
     skyRef.current?.position.copy(camera.position);
     if (cloudOverlayRef.current) {
       cloudOverlayRef.current.position.copy(camera.position);
